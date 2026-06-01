@@ -42,6 +42,7 @@ bin/arc
 /.omc/
 /backlog/
 /.tmp/
+.arc.yaml
 
 # Runtime data (created at install destination, not in repo)
 db/
