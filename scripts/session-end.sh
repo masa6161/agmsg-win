@@ -24,6 +24,8 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_DIR="$SKILL_DIR/run"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/actas-lock.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/compat.sh"
 
 INPUT=$(cat 2>/dev/null || true)
 SESSION_ID=""
@@ -41,7 +43,7 @@ if [ -f "$PIDFILE" ]; then
     # Defensive: only kill if the pid's command line still looks like our
     # watch.sh. Pids can be recycled — a stale pidfile could point at an
     # unrelated process that took the same pid.
-    cmd=$(ps -o args= -p "$pid" 2>/dev/null || true)
+    cmd=$(compat_get_cmdline "$pid" || true)
     case "$cmd" in
       *"$SKILL_DIR/scripts/watch.sh"*) kill "$pid" 2>/dev/null || true ;;
       *) ;;

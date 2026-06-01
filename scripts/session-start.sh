@@ -32,6 +32,8 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_DIR="$SKILL_DIR/run"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/actas-lock.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/compat.sh"
 
 # Identity sanity check — no point launching a watcher with an empty pair set.
 PAIRS=$("$SCRIPT_DIR/identities.sh" "$PROJECT" "$TYPE" 2>/dev/null || true)
@@ -55,14 +57,19 @@ mkdir -p "$RUN_DIR" 2>/dev/null || true
 # Stop at PID 1 or after a bounded number of hops. Returns empty when no
 # match — in that case we skip the dedup step entirely.
 find_cc_pid() {
+  # On MSYS2, process tree walk cannot cross the Windows/MSYS2 boundary.
+  if [ -n "${AGMSG_CC_PID:-}" ]; then
+    echo "$AGMSG_CC_PID"
+    return 0
+  fi
   local pid="$$"
   local hops=0
   while [ "$pid" -gt 1 ] && [ "$hops" -lt 20 ]; do
-    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    pid=$(compat_get_ppid "$pid" || true)
     [ -z "$pid" ] && return 1
     [ "$pid" = "0" ] && return 1
     local cmd
-    cmd=$(ps -o args= -p "$pid" 2>/dev/null || true)
+    cmd=$(compat_get_cmdline "$pid" || true)
     # Match the actual claude binary, not e.g. "/bin/zsh -c '...claude...'"
     # by requiring the basename of the first token to be exactly "claude".
     local first
@@ -115,7 +122,7 @@ for f in "$RUN_DIR"/cc-instance.*; do
         # Defensive: only kill if the pid's command line actually matches
         # our watch.sh. Defends against pid recycling — a stale pidfile
         # could point at an unrelated process that took the same pid.
-        cmd=$(ps -o args= -p "$orphan_pid" 2>/dev/null || true)
+        cmd=$(compat_get_cmdline "$orphan_pid" || true)
         case "$cmd" in
           *"$SKILL_DIR/scripts/watch.sh"*) kill "$orphan_pid" 2>/dev/null || true ;;
           *) ;;  # not our watcher anymore; leave it alone

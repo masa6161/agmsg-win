@@ -12,6 +12,8 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/storage.sh"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/actas-lock.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/compat.sh"
 
 # Prevent infinite loop: if stop hook is already active, exit silently
 INPUT=$(cat 2>/dev/null || true)
@@ -60,11 +62,7 @@ fi
 MARKER="$SKILL_DIR/run/.lastcheck-$AGENT"
 
 if [ -f "$MARKER" ]; then
-  if [ "$(uname)" = "Darwin" ]; then
-    last=$(stat -f %m "$MARKER")
-  else
-    last=$(stat -c %Y "$MARKER")
-  fi
+  last=$(compat_file_mtime "$MARKER")
   now=$(date +%s)
   # Prefer the new delivery.turn.check_interval; fall back to legacy
   # hook.check_interval for users who haven't migrated.
@@ -110,11 +108,13 @@ for team in "${TEAM_LIST[@]}"; do
     other:*) continue ;;
   esac
 
-  RESULT=$(sqlite3 "$DB" "
-    SELECT from_agent || char(31) || replace(replace(body, char(10), '\n'), char(9), '\t') || char(31) || created_at
+  # Raw 0x1f via -separator; char(31) as a value is escaped to "^_" by
+  # SQLite 3.43+. tr -d '\r' strips Windows CRLF line terminators.
+  RESULT=$(sqlite3 -separator $'\x1f' "$DB" "
+    SELECT from_agent, replace(replace(body, char(10), '\n'), char(9), '\t'), created_at
     FROM messages WHERE team='$team' AND to_agent='$AGENT' AND read_at IS NULL
     ORDER BY created_at ASC;
-  ")
+  " | tr -d '\r')
   if [ -n "$RESULT" ]; then
     COUNT=$(echo "$RESULT" | wc -l | tr -d ' ')
     OUTPUT+="$COUNT new message(s) in $team:"$'\n'

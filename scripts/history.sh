@@ -23,11 +23,15 @@ else
   WHERE="WHERE team='$TEAM'"
 fi
 
-# Escape newlines/tabs in body, use unit separator between fields
-RESULT=$(sqlite3 "$DB" "
-  SELECT from_agent || char(31) || to_agent || char(31) || replace(replace(body, char(10), '\n'), char(9), '\t') || char(31) || created_at || char(31) || CASE WHEN read_at IS NULL THEN '●' ELSE '○' END
+# Emit a raw 0x1f between columns via the CLI -separator. Building the
+# separator as a value with char(31) is unsafe: SQLite 3.43+ escapes control
+# characters (0x1f renders as "^_") when they appear in a column value, which
+# breaks the read split. tr -d '\r' drops sqlite3's CRLF line terminators on
+# Windows (and any CR inside the body) so no field carries a trailing \r.
+RESULT=$(sqlite3 -separator $'\x1f' "$DB" "
+  SELECT from_agent, to_agent, replace(replace(body, char(10), '\n'), char(9), '\t'), created_at, CASE WHEN read_at IS NULL THEN '●' ELSE '○' END
   FROM messages $WHERE ORDER BY created_at DESC LIMIT $LIMIT;
-")
+" | tr -d '\r')
 
 if [ -z "$RESULT" ]; then
   echo "No message history."

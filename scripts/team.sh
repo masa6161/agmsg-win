@@ -18,6 +18,8 @@ echo "Team: $TEAM"
 echo ""
 
 COUNT=0
+# tr -d '\r' strips sqlite3's CRLF line terminators on Windows so the last
+# field (registrations) is a clean integer for the -gt comparison below.
 while IFS='	' read -r name types project registrations; do
   if [ "${registrations:-0}" -gt 1 ]; then
     echo "  $name ($types) — $project (+$((registrations - 1)) more)"
@@ -47,7 +49,7 @@ done < <(sqlite3 -separator '	' :memory: \
      ), '?'),
      json_array_length(registrations)
    FROM agents, json_each(agents.registrations) AS r
-   GROUP BY name, registrations;")
+   GROUP BY name, registrations;" | tr -d '\r')
 
 echo ""
 echo "$COUNT member(s)"
