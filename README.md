@@ -46,6 +46,62 @@ The **command name** determines:
 
 After install, **restart your agent** (Claude Code / Codex) so it picks up the new skill.
 
+## Windows
+
+The PowerShell wrappers in this repository (`install.ps1`, `uninstall.ps1`, `setup.ps1`) provide a native Windows install experience. They handle detection and setup only — the actual scripts run in Git Bash under the hood.
+
+> **Note:** This `setup.ps1` is the bootstrap for `masa6161/agmsg-win` and is a separate install path from the upstream `setup.sh` (`fujibee/agmsg`).
+
+### Prerequisites
+
+- **Git for Windows** — provides Git Bash (MSYS2), which is the runtime for all agmsg scripts.
+- **sqlite3** — must be reachable from Git Bash (e.g. via Chocolatey: `choco install sqlite`).
+
+> **WSL bash is not supported.** agmsg scripts rely on MSYS2 conventions (`cygpath`, MSYS-style `$HOME`, `/etc/profile`). The Windows Subsystem for Linux launchers (`System32\bash.exe`, `WindowsApps\bash.exe`) are explicitly rejected by the installer.
+
+### One-liner install
+
+```powershell
+iex (irm https://raw.githubusercontent.com/masa6161/agmsg-win/main/setup.ps1)
+```
+
+To pass arguments (e.g. a custom command name), use the scriptblock form:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/masa6161/agmsg-win/main/setup.ps1))) --cmd m
+```
+
+### Clone and install
+
+```powershell
+git clone https://github.com/masa6161/agmsg-win.git
+cd agmsg-win
+.\install.ps1 --cmd agmsg
+```
+
+Running `.\install.ps1` without arguments defaults to `--cmd agmsg` (no interactive prompt).
+
+### Uninstall
+
+```powershell
+.\uninstall.ps1 --yes          # Remove everything
+.\uninstall.ps1 --keep-data    # Remove skill but keep DB and teams
+```
+
+### ExecutionPolicy
+
+Running local `.ps1` files requires at least `RemoteSigned` policy:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+The `iex` one-liner does not need this — `iex` evaluates a string, not a file. `setup.ps1` also invokes the cloned `install.ps1` with `-ExecutionPolicy Bypass` internally, so the one-liner works even under `Restricted` policy.
+
+### Runtime note
+
+The PowerShell wrappers are thin entry points for detection and setup. All install/uninstall logic lives in the bash scripts (`install.sh`, `uninstall.sh`). Git Bash remains a runtime dependency — it is not only used during installation but also when agmsg scripts run day-to-day.
+
 ## Join a Team
 
 Agents join teams by **identity**: `(agent name, team)`. Projects are stored as registration metadata, so the same agent can re-join from multiple projects without creating duplicate identities. The easiest way:
