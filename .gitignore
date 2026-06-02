@@ -40,6 +40,7 @@ bin/arc
 .claude/scheduled_tasks.lock
 
 /.omc/
+/.omx/
 /backlog/
 /.tmp/
 .arc.yaml
