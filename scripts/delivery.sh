@@ -32,6 +32,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILL_NAME="$(basename "$SKILL_DIR")"
 RUN_DIR="$SKILL_DIR/run"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/compat.sh"
 
 resolve_hooks_file() {
   local type="$1"
@@ -182,21 +184,25 @@ apply_settings() {
   settings_esc=$(strip_agmsg_event "$settings_esc" "Stop"         | sed "s/'/''/g")
 
   # 2) Re-add what this mode wants.
+  # On MSYS2/Windows, prefix hook commands with 'bash' so PowerShell can run them.
+  _agmsg_detect_platform
+  local _cp=""
+  [ "$_agmsg_platform" = "msys" ] && _cp="bash "
   case "$mode" in
     monitor)
-      local ss="'$SKILL_DIR/scripts/session-start.sh' '$type' '$project'"
-      local se="'$SKILL_DIR/scripts/session-end.sh'   '$type' '$project'"
+      local ss="${_cp}'$SKILL_DIR/scripts/session-start.sh' '$type' '$project'"
+      local se="${_cp}'$SKILL_DIR/scripts/session-end.sh'   '$type' '$project'"
       settings_esc=$(add_event_entry "$settings_esc" "SessionStart" "$ss" | sed "s/'/''/g")
       settings_esc=$(add_event_entry "$settings_esc" "SessionEnd"   "$se" | sed "s/'/''/g")
       ;;
     turn)
-      local cmd="'$SKILL_DIR/scripts/check-inbox.sh' '$type' '$project'"
+      local cmd="${_cp}'$SKILL_DIR/scripts/check-inbox.sh' '$type' '$project'"
       settings_esc=$(add_event_entry "$settings_esc" "Stop" "$cmd" | sed "s/'/''/g")
       ;;
     both)
-      local ss="'$SKILL_DIR/scripts/session-start.sh' '$type' '$project'"
-      local se="'$SKILL_DIR/scripts/session-end.sh'   '$type' '$project'"
-      local st="'$SKILL_DIR/scripts/check-inbox.sh'   '$type' '$project'"
+      local ss="${_cp}'$SKILL_DIR/scripts/session-start.sh' '$type' '$project'"
+      local se="${_cp}'$SKILL_DIR/scripts/session-end.sh'   '$type' '$project'"
+      local st="${_cp}'$SKILL_DIR/scripts/check-inbox.sh'   '$type' '$project'"
       settings_esc=$(add_event_entry "$settings_esc" "SessionStart" "$ss" | sed "s/'/''/g")
       settings_esc=$(add_event_entry "$settings_esc" "SessionEnd"   "$se" | sed "s/'/''/g")
       settings_esc=$(add_event_entry "$settings_esc" "Stop"         "$st" | sed "s/'/''/g")
@@ -228,11 +234,7 @@ emit_monitor_directive() {
   # present (older CC, non-CC runtimes).
   local session_id="${CLAUDE_CODE_SESSION_ID:-}"
   if [ -z "$session_id" ]; then
-    if command -v uuidgen >/dev/null 2>&1; then
-      session_id="agmsg-$(uuidgen | tr 'A-Z' 'a-z')"
-    else
-      session_id="agmsg-$(date +%s)-$$"
-    fi
+    session_id="agmsg-$(compat_uuidgen | tr 'A-Z' 'a-z')"
   fi
 
   # Skip the directive when this CC session already has a live watcher —
@@ -392,7 +394,7 @@ kill_all_watchers() {
         # Defensive: only kill if the pid's command line still looks like
         # our watch.sh. Defends against pid recycling — a stale pidfile
         # could point at an unrelated process that reused the pid.
-        cmd=$(ps -o args= -p "$pid" 2>/dev/null || true)
+        cmd=$(compat_get_cmdline "$pid" || true)
         case "$cmd" in
           *"$SKILL_DIR/scripts/watch.sh"*)
             kill "$pid" 2>/dev/null && killed=$((killed + 1)) ;;

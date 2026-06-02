@@ -22,12 +22,14 @@ if [ ! -f "$DB" ]; then
   exit 0
 fi
 
-# Get unread messages — escape newlines/tabs in body to keep one record per line
-UNREAD=$(sqlite3 "$DB" "
-  SELECT from_agent || char(31) || replace(replace(body, char(10), '\n'), char(9), '\t') || char(31) || created_at
+# Get unread messages — escape newlines/tabs in body to keep one record per line.
+# Use the CLI -separator (raw 0x1f); char(31) as a value gets escaped to "^_"
+# by SQLite 3.43+. tr -d '\r' strips Windows CRLF line terminators.
+UNREAD=$(sqlite3 -separator $'\x1f' "$DB" "
+  SELECT from_agent, replace(replace(body, char(10), '\n'), char(9), '\t'), created_at
   FROM messages WHERE team='$TEAM' AND to_agent='$AGENT' AND read_at IS NULL
   ORDER BY created_at ASC;
-")
+" | tr -d '\r')
 
 if [ -z "$UNREAD" ]; then
   if [ "$QUIET" = true ]; then exit 0; fi

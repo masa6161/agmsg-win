@@ -55,7 +55,7 @@ for config_file in "$TEAMS_DIR"/*/config.json; do
     SELECT DISTINCT name
     FROM agents, json_each(agents.registrations) AS r
     WHERE json_extract(r.value, '\$.type') = '$AGENT_TYPE';
-  ")
+  " | tr -d '\r')
 done
 
 if [ -z "$EXACT_MATCHES" ] && [ -z "$SUGGESTED_MATCHES" ]; then
