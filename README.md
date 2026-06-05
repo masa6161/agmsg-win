@@ -102,6 +102,8 @@ The `iex` one-liner does not need this — `iex` evaluates a string, not a file.
 
 The PowerShell wrappers are thin entry points for detection and setup. All install/uninstall logic lives in the bash scripts (`install.sh`, `uninstall.sh`). Git Bash remains a runtime dependency — it is not only used during installation but also when agmsg scripts run day-to-day.
 
+For developer documentation on the wrapper internals (Git Bash detection, path conversion, shell injection safety, CRLF handling), see [Windows Internals](docs/windows-internals.md).
+
 ## Join a Team
 
 Agents join teams by **identity**: `(agent name, team)`. Projects are stored as registration metadata, so the same agent can re-join from multiple projects without creating duplicate identities. The easiest way:

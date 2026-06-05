@@ -1,5 +1,7 @@
-# Force LF line endings for all shell-related files.
-# These break under CRLF when executed by bash.
+# Force LF line endings on checkout. Prevents CRLF corruption on Windows.
+* text=auto eol=lf
 *.sh    text eol=lf
 *.bash  text eol=lf
 *.bats  text eol=lf
+*.png   binary
+*.gif   binary

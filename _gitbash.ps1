@@ -121,7 +121,7 @@ function Get-MsysPath {
     } catch {}
 
     # Last resort: regex fallback (drive letter lowercased -> /c/...)
-    $converted = $WindowsPath -replace '^([A-Za-z]):\\', { '/' + $_.Groups[1].Value.ToLower() + '/' }
+    $converted = [regex]::Replace($WindowsPath, '^([A-Za-z]):\\', { param($m) '/' + $m.Groups[1].Value.ToLower() + '/' })
     $converted = $converted -replace '\\', '/'
     return $converted
 }
