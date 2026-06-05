@@ -1,0 +1,5 @@
+# Force LF line endings for all shell-related files.
+# These break under CRLF when executed by bash.
+*.sh    text eol=lf
+*.bash  text eol=lf
+*.bats  text eol=lf

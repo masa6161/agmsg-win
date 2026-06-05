@@ -87,12 +87,17 @@ strip_agmsg_event() {
 
 # Append a single entry of the form {"matcher":"","hooks":[{"type":"command","command":"<cmd>"}]}
 # to .hooks.<event>, creating arrays/objects as needed.
+# On MSYS2/Windows an explicit "shell":"bash" field is added so Claude Code
+# always routes to Git Bash even when it falls back to PowerShell for hooks.
 add_event_entry() {
   local settings_esc="$1"
   local event="$2"
   local cmd="$3"
 
-  local entry="{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"$cmd\"}]}"
+  # On Windows, add "shell":"bash" so CC routes to Git Bash, not PowerShell.
+  local hook_obj="{\"type\":\"command\",\"command\":\"$cmd\"}"
+  [ "$_agmsg_platform" = "msys" ] && hook_obj="{\"type\":\"command\",\"command\":\"$cmd\",\"shell\":\"bash\"}"
+  local entry="{\"matcher\":\"\",\"hooks\":[$hook_obj]}"
   local entry_esc
   entry_esc=$(printf '%s' "$entry" | sed "s/'/''/g")
 
