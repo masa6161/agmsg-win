@@ -32,6 +32,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILL_NAME="$(basename "$SKILL_DIR")"
 RUN_DIR="$SKILL_DIR/run"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/compat.sh"
 
 resolve_hooks_file() {
   local type="$1"
@@ -131,6 +133,9 @@ add_event_entry_file() {
     local cw; cw=$(windows_wrap "$cmd")
     cw="${cw//\\/\\\\}"; cw="${cw//\"/\\\"}"
     hook_inner="$hook_inner,\"commandWindows\":\"$cw\""
+  elif [ "$hook_type" = "claude-code" ]; then
+    _agmsg_detect_platform
+    [ "$_agmsg_platform" = "msys" ] && hook_inner="$hook_inner,\"shell\":\"bash\""
   fi
   local entry="{\"matcher\":\"\",\"hooks\":[{$hook_inner}]}"
   local entry_esc
@@ -351,11 +356,7 @@ emit_monitor_directive() {
   # present (older CC, non-CC runtimes).
   local session_id="${CLAUDE_CODE_SESSION_ID:-}"
   if [ -z "$session_id" ]; then
-    if command -v uuidgen >/dev/null 2>&1; then
-      session_id="agmsg-$(uuidgen | tr 'A-Z' 'a-z')"
-    else
-      session_id="agmsg-$(date +%s)-$$"
-    fi
+    session_id="agmsg-$(compat_uuidgen | tr 'A-Z' 'a-z')"
   fi
 
   # Skip the directive when this CC session already has a live watcher —
@@ -526,7 +527,7 @@ kill_all_watchers() {
         # Defensive: only kill if the pid's command line still looks like
         # our watch.sh. Defends against pid recycling — a stale pidfile
         # could point at an unrelated process that reused the pid.
-        cmd=$(ps -o args= -p "$pid" 2>/dev/null || true)
+        cmd=$(compat_get_cmdline "$pid" 2>/dev/null || true)
         case "$cmd" in
           *"$SKILL_DIR/scripts/watch.sh"*)
             # watch.sh argv is "watch.sh <session_id> <project> <type> [name]",

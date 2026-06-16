@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib/compat.sh"
 
 # SessionStart hook for delivery modes `monitor` and `both`.
 #
@@ -60,11 +62,11 @@ find_cc_pid() {
   local pid="$$"
   local hops=0
   while [ "$pid" -gt 1 ] && [ "$hops" -lt 20 ]; do
-    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    pid=$(compat_get_ppid "$pid" 2>/dev/null)
     [ -z "$pid" ] && return 1
     [ "$pid" = "0" ] && return 1
     local cmd
-    cmd=$(ps -o args= -p "$pid" 2>/dev/null || true)
+    cmd=$(compat_get_cmdline "$pid" 2>/dev/null || true)
     # Match the actual claude binary, not e.g. "/bin/zsh -c '...claude...'"
     # by requiring the basename of the first token to be exactly "claude".
     local first
@@ -117,7 +119,7 @@ for f in "$RUN_DIR"/cc-instance.*; do
         # Defensive: only kill if the pid's command line actually matches
         # our watch.sh. Defends against pid recycling — a stale pidfile
         # could point at an unrelated process that took the same pid.
-        cmd=$(ps -o args= -p "$orphan_pid" 2>/dev/null || true)
+        cmd=$(compat_get_cmdline "$orphan_pid" 2>/dev/null || true)
         case "$cmd" in
           *"$SKILL_DIR/scripts/watch.sh"*) kill "$orphan_pid" 2>/dev/null || true ;;
           *) ;;  # not our watcher anymore; leave it alone
