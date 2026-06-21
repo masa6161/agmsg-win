@@ -8,8 +8,9 @@ const net = require("net");
 const path = require("path");
 const readline = require("readline");
 
-const SCRIPT_DIR = __dirname;
-const SKILL_DIR = path.resolve(SCRIPT_DIR, "..");
+const SCRIPT_DIR = __dirname;                              // .../scripts/codex
+const SKILL_DIR = path.resolve(SCRIPT_DIR, "..", "..");    // skill root
+const SCRIPTS_DIR = path.join(SKILL_DIR, "scripts");       // top-level scripts (siblings live here)
 const RUN_DIR = path.join(SKILL_DIR, "run");
 
 function usage() {
@@ -116,7 +117,7 @@ function parseArgs(argv) {
 }
 
 function runScript(script, args) {
-  const result = spawnSync(path.join(SCRIPT_DIR, script), args, {
+  const result = spawnSync(path.join(SCRIPTS_DIR, script), args, {
     cwd: SKILL_DIR,
     encoding: "utf8",
   });
@@ -810,8 +811,8 @@ class CodexBridge {
   }
 
   buildPrompt() {
-    const inbox = path.join(SCRIPT_DIR, "inbox.sh");
-    const send = path.join(SCRIPT_DIR, "send.sh");
+    const inbox = path.join(SCRIPTS_DIR, "inbox.sh");
+    const send = path.join(SCRIPTS_DIR, "send.sh");
     if (this.opts.inlineInbox) {
       return [
         `agmsg delivered the following unread messages for ${this.identity.team}/${this.identity.name}:`,
@@ -831,7 +832,7 @@ class CodexBridge {
   }
 
   readInboxForPrompt() {
-    const result = spawnSync(path.join(SCRIPT_DIR, "inbox.sh"), [this.identity.team, this.identity.name], {
+    const result = spawnSync(path.join(SCRIPTS_DIR, "inbox.sh"), [this.identity.team, this.identity.name], {
       cwd: this.opts.project,
       encoding: "utf8",
     });

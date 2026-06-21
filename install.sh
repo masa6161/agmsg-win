@@ -279,6 +279,7 @@ if [ "$UPDATE_ONLY" = true ]; then
   fi
   cp "$SCRIPT_DIR/openai.yaml" "$SKILL_DIR/agents/openai.yaml" 2>/dev/null || true
   chmod +x "$SKILL_DIR/scripts/"*.sh
+  chmod +x "$SKILL_DIR/scripts/codex/"* 2>/dev/null || true
   install_windows_helpers
   INSTALLED_VERSION="$(agmsg_source_version)"
   printf '%s\n' "$INSTALLED_VERSION" > "$SKILL_DIR/VERSION"
@@ -333,6 +334,7 @@ done
 
 cp "$SCRIPT_DIR/openai.yaml" "$SKILL_DIR/agents/openai.yaml" 2>/dev/null || true
 chmod +x "$SKILL_DIR/scripts/"*.sh
+chmod +x "$SKILL_DIR/scripts/codex/"* 2>/dev/null || true
 install_windows_helpers
 
 # Marker file for uninstall detection

@@ -8,7 +8,7 @@ set -euo pipefail
 # exposes CODEX_THREAD_ID to hooks.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SKILL_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUN_DIR="$SKILL_DIR/run"
 
 PROJECT="$(pwd)"
@@ -124,7 +124,7 @@ if ! port_alive "$PORT"; then
 fi
 SOCKET_URL="ws://127.0.0.1:$PORT"
 
-"$SCRIPT_DIR/delivery.sh" set monitor codex "$PROJECT" >/dev/null
+"$SCRIPT_DIR/../delivery.sh" set monitor codex "$PROJECT" >/dev/null
 
 export AGMSG_CODEX_BRIDGE=1
 export AGMSG_CODEX_BRIDGE_APP_SERVER="$SOCKET_URL"
