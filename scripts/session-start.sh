@@ -48,7 +48,7 @@ PAIRS=$("$SCRIPT_DIR/identities.sh" "$PROJECT" "$TYPE" 2>/dev/null || true)
 [ -n "$PAIRS" ] || exit 0
 
 # Type-specific SessionStart behaviour (Template Method). A type may ship
-# types/<type>/_session-start.sh defining agmsg_session_start to override the
+# scripts/drivers/types/<type>/_session-start.sh defining agmsg_session_start to override the
 # default no-op — codex uses it to hand the session off to the bridge. The plug
 # is sourced in this script's context so it sees PROJECT / RUN_DIR / SKILL_DIR /
 # PAIRS and the helpers sourced above; it may exit 0 (codex does, having no

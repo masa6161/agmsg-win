@@ -3,7 +3,7 @@
 #
 # Some agent types integrate by writing a small markdown rules file that tells
 # the agent to poll the agmsg inbox after each tool call (gemini, antigravity,
-# opencode). Their per-type plug (types/<name>/_delivery.sh) is then a one-line
+# opencode). Their per-type plug (scripts/drivers/types/<name>/_delivery.sh) is then a one-line
 # delegation to rulefile_apply.
 #
 # Runs in delivery.sh's sourced context: resolve_hooks_file and SKILL_DIR are

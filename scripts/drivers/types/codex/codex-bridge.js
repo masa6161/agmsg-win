@@ -8,8 +8,8 @@ const net = require("net");
 const path = require("path");
 const readline = require("readline");
 
-const SCRIPT_DIR = __dirname;                              // .../types/codex (codex siblings live here)
-const SKILL_DIR = path.resolve(SCRIPT_DIR, "..", "..");    // skill root
+const SCRIPT_DIR = __dirname;                              // .../scripts/drivers/types/codex (codex siblings live here)
+const SKILL_DIR = path.resolve(SCRIPT_DIR, "..", "..", "..", "..");    // skill root
 const SCRIPTS_DIR = path.join(SKILL_DIR, "scripts");       // type-independent engine scripts (identities/inbox/send)
 const RUN_DIR = path.join(SKILL_DIR, "run");
 

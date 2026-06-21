@@ -51,15 +51,12 @@ $projectBob = Join-Path $testRoot 'project-bob'
 $projectMulti = Join-Path $testRoot 'project-multi'
 
 try {
-    $typesDir = Join-Path $skillDir 'types'
-    New-Item -ItemType Directory -Force -Path $scriptsDir, $typesDir, (Join-Path $skillDir 'db'), (Join-Path $skillDir 'teams'), $storageDir, $projectSingle, $projectBob, $projectMulti | Out-Null
+    New-Item -ItemType Directory -Force -Path $scriptsDir, (Join-Path $skillDir 'db'), (Join-Path $skillDir 'teams'), $storageDir, $projectSingle, $projectBob, $projectMulti | Out-Null
+    # Recursive copy brings scripts/ including the folded scripts/drivers/types/
+    # manifests + per-type runtimes, so join.sh's type-registry validation resolves
+    # scripts/drivers/types/<name>/type.conf relative to the skill dir (the real
+    # installer ships them the same way via the single scripts/ copy in install.sh).
     Copy-Item -Recurse -Force -Path (Join-Path $RepoRoot 'scripts/*') -Destination $scriptsDir
-    # Ship the agent-type manifests too: join.sh and friends validate the agent
-    # type via the type registry, which resolves types/<name>/type.conf relative
-    # to the skill dir. Without this, `join … codex` fails with "Unknown agent
-    # type" (the real installer copies types/ via install.sh; this smoke stages
-    # the skill dir by hand, so it must mirror that).
-    Copy-Item -Recurse -Force -Path (Join-Path $RepoRoot 'types/*') -Destination $typesDir
 
     $wrapper = Join-Path $scriptsDir 'windows/agmsg.ps1'
     if (-not (Test-Path $wrapper)) {

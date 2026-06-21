@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Agent-type registry.
 #
-# Agent types are discovered from `types/<name>/type.conf` manifests instead of
+# Agent types are discovered from `scripts/drivers/types/<name>/type.conf` manifests instead of
 # hardcoded whitelists, so a type (and its template / delivery / session-start /
 # spawn behavior) can be added by dropping a directory — including by an external
 # add-on outside the agmsg tree.
@@ -11,7 +11,7 @@
 # execute code. Multi-value keys are space-separated.
 #
 # Search order:
-#   1. in-tree built-ins:  <skill-root>/types
+#   1. in-tree built-ins:  <skill-root>/scripts/drivers/types
 #   2. external add-ons:   ${AGMSG_HOME:-$HOME/.config/agmsg}/types
 # Built-in names are reserved; if the same name appears in both, the in-tree one
 # wins (listed first).
@@ -32,7 +32,7 @@ _agmsg_type_search_dirs() {
     # this lib lives at <root>/scripts/lib/type-registry.sh -> up two = <root>
     root="$(cd "$_AGMSG_REGISTRY_LIB_DIR/../.." 2>/dev/null && pwd)"
   fi
-  [ -n "$root" ] && printf '%s\n' "$root/types"
+  [ -n "$root" ] && printf '%s\n' "$root/scripts/drivers/types"
   # ${HOME:-} keeps this safe under `set -u` with an empty environment.
   local ext="${AGMSG_HOME:-${HOME:-}/.config/agmsg}/types"
   [ -n "$root" ] && [ "$ext" = "$root/types" ] || printf '%s\n' "$ext"
@@ -102,7 +102,7 @@ agmsg_type_get() {
 
 # Echo the absolute path to <name>'s SKILL command template, resolved from the
 # manifest `template=` key relative to the type's own directory
-# (types/<name>/template.md). Returns 1 if the type or its template= key is
+# (scripts/drivers/types/<name>/template.md). Returns 1 if the type or its template= key is
 # unknown. template= is a type-dir-relative filename; reject absolute paths or
 # traversal so a third-party manifest can't redirect reads outside its type dir
 # (mirrors resolve_hooks_file's guard in delivery.sh).

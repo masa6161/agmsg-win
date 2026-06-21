@@ -76,7 +76,7 @@ resolve_hooks_file() {
 
 # Default delivery behavior: JSON event-hooks (SessionStart / SessionEnd / Stop)
 # written into the type's hooks_file. Used by claude-code and codex. Rule-file
-# types override this by defining agmsg_delivery_apply in types/<name>/_delivery.sh.
+# types override this by defining agmsg_delivery_apply in scripts/drivers/types/<name>/_delivery.sh.
 agmsg_delivery_apply_default() {
   local type="$1"
   local project="$2"
@@ -144,7 +144,7 @@ agmsg_delivery_apply_default() {
 }
 
 # Default delivery entry points (Template Method). A type's plug
-# (types/<name>/_delivery.sh) may override any subset of these:
+# (scripts/drivers/types/<name>/_delivery.sh) may override any subset of these:
 #   agmsg_delivery_apply      — write the hook file for a mode (default: JSON event-hooks)
 #   agmsg_delivery_on_enable  — side effects when enabling monitor/both (default: none)
 #   agmsg_delivery_on_disable — side effects when turning delivery off  (default: none)

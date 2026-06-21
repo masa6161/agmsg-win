@@ -164,7 +164,7 @@ if [ -n "$SPAWN_LAUNCHER" ]; then
   NODE_BIN="${AGMSG_NODE_BIN:-$(command -v node 2>/dev/null || true)}"
   [ -n "$NODE_BIN" ] || die "'node' not found on PATH — spawning '$AGENT_TYPE' requires Node.js"
   type_dir="$(agmsg_type_dir "$AGENT_TYPE")" \
-    || die "agent type '$AGENT_TYPE' is not registered (no types/$AGENT_TYPE/type.conf)"
+    || die "agent type '$AGENT_TYPE' is not registered (no scripts/drivers/types/$AGENT_TYPE/type.conf)"
   SPAWN_AGENT="$type_dir/$SPAWN_LAUNCHER"
   [ -f "$SPAWN_AGENT" ] || die "spawn launcher not found for '$AGENT_TYPE': $SPAWN_AGENT"
 fi

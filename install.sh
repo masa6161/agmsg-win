@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENTS_DIR="$HOME/.agents"
 
 # Type registry — resolve each type's SKILL command template from its manifest
-# (types/<name>/template.md) instead of a hardcoded templates/ path. Read-only
+# (scripts/drivers/types/<name>/template.md) instead of a hardcoded templates/ path. Read-only
 # helpers; safe to source.
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/scripts/lib/type-registry.sh"
@@ -253,12 +253,10 @@ if [ "$UPDATE_ONLY" = true ]; then
     gemini|antigravity|opencode) TPL_TYPE="$AGENT_TYPE" ;;
   esac
   sed "s/__SKILL_NAME__/$SKILL_NAME/g" "$(agmsg_type_template_path "$TPL_TYPE")" > "$SKILL_DIR/SKILL.md"
-  # Recursive copy so nested helper dirs (scripts/lib/) ship without enumerating files.
+  # Recursive copy so nested helper dirs (scripts/lib/, scripts/drivers/types/)
+  # ship without enumerating files. The agent-type manifests and per-type runtimes
+  # live under scripts/drivers/types/ now, so this single copy carries them too.
   cp -R "$SCRIPT_DIR/scripts/." "$SKILL_DIR/scripts/"
-  # Ship the agent-type manifests (and their co-located SKILL templates) so the
-  # type registry resolves types post-install.
-  mkdir -p "$SKILL_DIR/types"
-  cp -R "$SCRIPT_DIR/types/." "$SKILL_DIR/types/"
   # Refresh the Claude Code slash command file (was missed in earlier --update flows).
   CC_COMMANDS_DIR="$HOME/.claude/commands"
   if [ -d "$CC_COMMANDS_DIR" ] && [ -f "$CC_COMMANDS_DIR/$SKILL_NAME.md" ]; then
@@ -282,7 +280,7 @@ if [ "$UPDATE_ONLY" = true ]; then
   fi
   cp "$SCRIPT_DIR/openai.yaml" "$SKILL_DIR/agents/openai.yaml" 2>/dev/null || true
   chmod +x "$SKILL_DIR/scripts/"*.sh
-  chmod +x "$SKILL_DIR/types/codex/"*.sh 2>/dev/null || true
+  chmod +x "$SKILL_DIR/scripts/drivers/types/codex/"*.sh 2>/dev/null || true
   install_windows_helpers
   INSTALLED_VERSION="$(agmsg_source_version)"
   printf '%s\n' "$INSTALLED_VERSION" > "$SKILL_DIR/VERSION"
@@ -316,22 +314,21 @@ echo "  Installing to ~/.agents/skills/$CMD_NAME/ ..."
 mkdir -p "$SKILL_DIR"/{scripts,types,db,agents}
 
 # SKILL.md is generated from the agent-specific command template, resolved from
-# the type manifest (types/<type>/template.md). The shared SKILL.md uses the
+# the type manifest (scripts/drivers/types/<type>/template.md). The shared SKILL.md uses the
 # codex template by default; gemini/antigravity/opencode get their own.
 TPL_TYPE="codex"
 case "$AGENT_TYPE" in
   gemini|antigravity|opencode) TPL_TYPE="$AGENT_TYPE" ;;
 esac
 sed "s/__SKILL_NAME__/$CMD_NAME/g" "$(agmsg_type_template_path "$TPL_TYPE")" > "$SKILL_DIR/SKILL.md"
-# Recursive copy so nested helper dirs (scripts/lib/) ship without enumerating files.
+# Recursive copy so nested helper dirs (scripts/lib/, scripts/drivers/types/) ship
+# without enumerating files. The agent-type manifests and per-type runtimes live
+# under scripts/drivers/types/ now, so this single copy carries them too.
 cp -R "$SCRIPT_DIR/scripts/." "$SKILL_DIR/scripts/"
-# Ship the agent-type manifests (and their co-located SKILL templates) so the
-# type registry resolves types post-install.
-cp -R "$SCRIPT_DIR/types/." "$SKILL_DIR/types/"
 
 cp "$SCRIPT_DIR/openai.yaml" "$SKILL_DIR/agents/openai.yaml" 2>/dev/null || true
 chmod +x "$SKILL_DIR/scripts/"*.sh
-chmod +x "$SKILL_DIR/types/codex/"*.sh 2>/dev/null || true
+chmod +x "$SKILL_DIR/scripts/drivers/types/codex/"*.sh 2>/dev/null || true
 install_windows_helpers
 
 # Marker file for uninstall detection

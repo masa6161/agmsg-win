@@ -11,20 +11,18 @@ setup_test_env() {
   chmod +x "$TEST_SKILL_DIR/scripts/"*.sh
   chmod +x "$TEST_SKILL_DIR/scripts/"*.js 2>/dev/null || true
 
-  # Copy the agent-type manifests so the type registry resolves types inside the
-  # sandbox (scripts/lib/type-registry.sh reads <skill-root>/types/<name>/type.conf).
-  # types/<name>/ also holds each type's runtime now — codex's launcher/bridge/
-  # shim/watch-once were folded out of scripts/codex/ into types/codex/.
-  mkdir -p "$TEST_SKILL_DIR/types"
-  cp -R "$BATS_TEST_DIRNAME"/../types/. "$TEST_SKILL_DIR/types/"
-  chmod +x "$TEST_SKILL_DIR/types/codex/"*.sh 2>/dev/null || true
+  # Agent-type manifests + per-type runtimes now live under scripts/drivers/types/
+  # (the type registry reads <skill-root>/scripts/drivers/types/<name>/type.conf),
+  # so the recursive scripts/ copy above already brings them along — no separate
+  # copy is needed. Just ensure codex's folded runtime scripts stay executable.
+  chmod +x "$TEST_SKILL_DIR/scripts/drivers/types/codex/"*.sh 2>/dev/null || true
 
   # Initialize DB
   bash "$TEST_SKILL_DIR/scripts/internal/init-db.sh"
 
   # Convenience vars
   export SCRIPTS="$TEST_SKILL_DIR/scripts"
-  export TYPES="$TEST_SKILL_DIR/types"
+  export TYPES="$TEST_SKILL_DIR/scripts/drivers/types"
 
   # Sandbox HOME so NO test can touch the developer's real home. Several paths
   # write under $HOME — e.g. codex-shim-install.sh creates $HOME/.agents/bin/codex

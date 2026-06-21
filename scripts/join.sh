@@ -7,7 +7,7 @@ set -euo pipefail
 
 TEAM="${1:?Usage: join.sh <team> <agent_id> <type> <project_path>}"
 AGENT_ID="${2:?Missing agent_id}"
-AGENT_TYPE="${3:?Missing type (a registered type under types/<name>/)}"
+AGENT_TYPE="${3:?Missing type (a registered type under scripts/drivers/types/<name>/)}"
 PROJECT_PATH="${4:?Missing project_path}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -16,7 +16,7 @@ source "$SCRIPT_DIR/lib/type-registry.sh"
 
 # Reject unknown agent types — the rest of agmsg (delivery.sh,
 # session-start.sh, identities.sh lookups) only supports registered types
-# (types/<name>/type.conf). Allowing arbitrary strings silently mis-registers an
+# (scripts/drivers/types/<name>/type.conf). Allowing arbitrary strings silently mis-registers an
 # agent and makes monitor mode fail with a confusing "no joined teams" message.
 if ! agmsg_is_known_type "$AGENT_TYPE"; then
   echo "Unknown agent type: '$AGENT_TYPE' (supported: $(agmsg_known_types | sort -u | paste -sd, - | sed 's/,/, /g'))" >&2

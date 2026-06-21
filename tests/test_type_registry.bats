@@ -6,8 +6,8 @@
 # whoami/join/spawn/delivery suites; these lock the registry primitives and the
 # six built-in manifests themselves.
 #
-# setup_test_env copies both scripts/ and types/ into TEST_SKILL_DIR, so the lib
-# resolves <skill-root>/types there. Each case sources the lib in a wiped env so
+# setup_test_env copies scripts/ (with scripts/drivers/types/) into TEST_SKILL_DIR, so the lib
+# resolves <skill-root>/scripts/drivers/types there. Each case sources the lib in a wiped env so
 # host vars (this is a Claude Code session — CLAUDE_CODE_SESSION_ID is set) cannot
 # leak into detection.
 
@@ -16,13 +16,13 @@ load test_helper
 setup() { setup_test_env; }
 teardown() { teardown_test_env; }
 
-# Write a node-launcher fixture type into TEST_SKILL_DIR/types so the suite
+# Write a node-launcher fixture type into TEST_SKILL_DIR/scripts/drivers/types so the suite
 # exercises the spawn= (Node launcher) mechanism generically, with no dependency
 # on any real external add-on:
 #   - "nodetype": a node-launcher type whose manifest sets spawn= to a .mjs, with
 #     a stub launcher file beside the manifest.
 write_node_launcher_fixtures() {
-  local nd="$TEST_SKILL_DIR/types/nodetype"
+  local nd="$TEST_SKILL_DIR/scripts/drivers/types/nodetype"
   mkdir -p "$nd"
   printf 'name=nodetype\ntemplate=cmd.nodetype.md\nspawn=nodetype-launcher.mjs\n' \
     > "$nd/type.conf"
@@ -118,7 +118,7 @@ write_node_launcher_fixtures() {
 
 @test "type-registry: manifests are DATA — never executed" {
   # An adversarial value must be read as a literal string, not run.
-  local dir="$TEST_SKILL_DIR/types/evil"
+  local dir="$TEST_SKILL_DIR/scripts/drivers/types/evil"
   mkdir -p "$dir"
   printf 'name=evil\ncli=$(touch %s/PWNED)\n' "$BATS_TEST_TMPDIR" > "$dir/type.conf"
   run env -i PATH="$PATH" bash -c "source '$SCRIPTS/lib/type-registry.sh'; agmsg_type_get evil cli"
