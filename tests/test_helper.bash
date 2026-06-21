@@ -10,6 +10,7 @@ setup_test_env() {
   cp -R "$BATS_TEST_DIRNAME"/../scripts/. "$TEST_SKILL_DIR/scripts/"
   chmod +x "$TEST_SKILL_DIR/scripts/"*.sh
   chmod +x "$TEST_SKILL_DIR/scripts/"*.js 2>/dev/null || true
+  chmod +x "$TEST_SKILL_DIR/scripts/codex/"* 2>/dev/null || true
 
   # Copy the agent-type manifests so the type registry resolves types inside the
   # sandbox (scripts/lib/type-registry.sh reads <skill-root>/types/<name>/type.conf).
@@ -17,7 +18,7 @@ setup_test_env() {
   cp -R "$BATS_TEST_DIRNAME"/../types/. "$TEST_SKILL_DIR/types/"
 
   # Initialize DB
-  bash "$TEST_SKILL_DIR/scripts/init-db.sh"
+  bash "$TEST_SKILL_DIR/scripts/internal/init-db.sh"
 
   # Convenience vars
   export SCRIPTS="$TEST_SKILL_DIR/scripts"
