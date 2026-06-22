@@ -11,6 +11,10 @@ NEW_NAME="${3:?Missing new agent name}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib/storage.sh"
+# Reject team names that would escape teams/ as a path segment (#140).
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/validate.sh"
+agmsg_validate_team_name "$TEAM" || exit 1
 TEAMS_DIR="$SCRIPT_DIR/../teams"
 DB="$(agmsg_db_path)"
 TEAM_CONFIG="$TEAMS_DIR/$TEAM/config.json"
@@ -24,7 +28,7 @@ fi
 CONFIG_ESCAPED=$(sed "s/'/''/g" "$TEAM_CONFIG")
 
 # Check old exists
-OLD_VAL=$(sqlite3 :memory: ".param set :json '$CONFIG_ESCAPED'" \
+OLD_VAL=$(agmsg_sqlite_mem ".param set :json '$CONFIG_ESCAPED'" \
   "SELECT json_extract(:json, '$.agents.$OLD_NAME');")
 if [ -z "$OLD_VAL" ] || [ "$OLD_VAL" = "null" ]; then
   echo "Agent $OLD_NAME not in team $TEAM"
@@ -32,7 +36,7 @@ if [ -z "$OLD_VAL" ] || [ "$OLD_VAL" = "null" ]; then
 fi
 
 # Check new doesn't exist
-NEW_VAL=$(sqlite3 :memory: ".param set :json '$CONFIG_ESCAPED'" \
+NEW_VAL=$(agmsg_sqlite_mem ".param set :json '$CONFIG_ESCAPED'" \
   "SELECT json_extract(:json, '$.agents.$NEW_NAME');")
 if [ -n "$NEW_VAL" ] && [ "$NEW_VAL" != "null" ]; then
   echo "Agent $NEW_NAME already exists in team $TEAM"
@@ -40,7 +44,7 @@ if [ -n "$NEW_VAL" ] && [ "$NEW_VAL" != "null" ]; then
 fi
 
 # Rename: set new key with old value, remove old key
-UPDATED=$(sqlite3 :memory: ".param set :json '$CONFIG_ESCAPED'" \
+UPDATED=$(agmsg_sqlite_mem ".param set :json '$CONFIG_ESCAPED'" \
   "SELECT json_remove(json_set(:json, '$.agents.$NEW_NAME', json_extract(:json, '$.agents.$OLD_NAME')), '$.agents.$OLD_NAME');")
 echo "$UPDATED" > "$TEAM_CONFIG"
 

@@ -18,6 +18,12 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib/storage.sh"
+# Reject team names that would escape teams/ as a path segment, on either side
+# of the rename (#140).
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/validate.sh"
+agmsg_validate_team_name "$OLD_TEAM" || exit 1
+agmsg_validate_team_name "$NEW_TEAM" || exit 1
 TEAMS_DIR="$SCRIPT_DIR/../teams"
 DB="$(agmsg_db_path)"
 OLD_DIR="$TEAMS_DIR/$OLD_TEAM"
@@ -40,7 +46,7 @@ mv "$OLD_DIR" "$NEW_DIR"
 NEW_CONFIG="$NEW_DIR/config.json"
 if [ -f "$NEW_CONFIG" ]; then
   CONFIG_ESCAPED=$(sed "s/'/''/g" "$NEW_CONFIG")
-  UPDATED=$(sqlite3 :memory: ".param set :json '$CONFIG_ESCAPED'" \
+  UPDATED=$(agmsg_sqlite_mem ".param set :json '$CONFIG_ESCAPED'" \
     "SELECT json_set(:json, '\$.name', '$NEW_TEAM');")
   echo "$UPDATED" > "$NEW_CONFIG"
 fi

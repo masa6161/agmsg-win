@@ -83,8 +83,7 @@ Do NOT manually edit config files. Always use join.sh.
 # this session held on <agent_id> so peers can pick them up immediately.
 ~/.agents/skills/agmsg/scripts/reset.sh "$(pwd)" <type> [agent_id] [session_id]
 
-# Set delivery mode for this project. Replaces the legacy hook.sh on/off,
-# which is kept as a deprecated alias only.
+# Set delivery mode for this project.
 #   monitor — real-time push via SessionStart + Monitor tool (claude-code only)
 #   turn    — Stop-hook pulls at the end of each assistant turn
 #   both    — monitor primary, turn as fallback

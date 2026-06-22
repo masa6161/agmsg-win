@@ -35,7 +35,7 @@ teardown() {
 @test "storage: init-db creates the db at the overridden path (and makes the dir)" {
   local custom="$BATS_TEST_TMPDIR/nested/store"
   [ ! -d "$custom" ]
-  AGMSG_STORAGE_PATH="$custom" bash "$SCRIPTS/init-db.sh"
+  AGMSG_STORAGE_PATH="$custom" bash "$SCRIPTS/internal/init-db.sh"
   [ -f "$custom/messages.db" ]
 }
 
@@ -88,6 +88,19 @@ teardown() {
   run agmsg_sqlite ":memory:" "SELECT 'only-this';"
   [ "$status" -eq 0 ]
   [ "$output" = "only-this" ]
+}
+
+@test "storage: agmsg_sqlite emits a raw char(31) separator, not caret '^_' (#102)" {
+  # sqlite3 >= 3.50 renders control bytes with caret notation by default, which
+  # would turn the char(31) record separator into the two chars "^_" and break
+  # the IFS=$'\x1f' field splitting in inbox/history/check-inbox + the watch
+  # stream. agmsg_sqlite must pass -escape off so the byte stays raw. On older
+  # sqlite3 the byte is raw anyway, so this holds on every supported version.
+  source "$SCRIPTS/lib/storage.sh"
+  run agmsg_sqlite ":memory:" "SELECT 'a'||char(31)||'b';"
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | grep -q $'\x1f'
+  ! printf '%s' "$output" | grep -q '\^_'
 }
 
 @test "send: concurrent fan-out to N recipients all land (no SQLITE_BUSY)" {

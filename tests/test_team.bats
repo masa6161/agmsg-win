@@ -84,6 +84,40 @@ teardown() {
   [[ "$output" =~ "teams=myteam" ]]
 }
 
+@test "whoami: resolves project paths containing single quotes" {
+  local project="$TEST_SKILL_DIR/pro'j"
+  mkdir -p "$project/subdir"
+  bash "$SCRIPTS/join.sh" myteam alice claude-code "$project"
+  run bash "$SCRIPTS/whoami.sh" "$project/subdir" claude-code
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "agent=alice" ]]
+  [[ "$output" =~ "teams=myteam" ]]
+  [[ "$output" =~ "project=$project" ]]
+  [[ ! "$output" =~ "not_joined=true" ]]
+  [[ ! "$output" =~ ".parameter" ]]
+}
+
+@test "whoami: resolves team and agent names containing single quotes" {
+  local team="O'Brien"
+  local agent="al'ice"
+  bash "$SCRIPTS/join.sh" "$team" "$agent" claude-code /tmp/proj
+  run bash "$SCRIPTS/whoami.sh" /tmp/proj claude-code
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "agent=$agent" ]]
+  [[ "$output" =~ "teams=$team" ]]
+  [[ ! "$output" =~ ".parameter" ]]
+}
+
+@test "whoami: ignores malformed team configs without sqlite parameter output" {
+  mkdir -p "$TEST_SKILL_DIR/teams/bad"
+  printf '{' > "$TEST_SKILL_DIR/teams/bad/config.json"
+  run bash "$SCRIPTS/whoami.sh" /tmp/proj claude-code
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "not_joined=true" ]]
+  [[ ! "$output" =~ ".parameter" ]]
+  [[ ! "$output" =~ "malformed JSON" ]]
+}
+
 @test "whoami: returns not_joined when no match" {
   run bash "$SCRIPTS/whoami.sh" /tmp/unknown claude-code
   [ "$status" -eq 0 ]
@@ -201,7 +235,7 @@ teardown() {
   [[ "$output" =~ "Renamed team oldteam → newteam" ]]
   [ ! -d "$TEST_SKILL_DIR/teams/oldteam" ]
   [ -f "$TEST_SKILL_DIR/teams/newteam/config.json" ]
-  run sqlite3 :memory: "SELECT json_extract(readfile('$TEST_SKILL_DIR/teams/newteam/config.json'), '\$.name');"
+  run sqlite_mem "SELECT json_extract(readfile('$(rf "$TEST_SKILL_DIR/teams/newteam/config.json")'), '\$.name');"
   [ "$output" = "newteam" ]
 }
 
@@ -273,3 +307,81 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "join: accepts opencode" {
+  run bash "$SCRIPTS/join.sh" myteam alice opencode /tmp/proj
+  [ "$status" -eq 0 ]
+}
+# --- #140: team-name path traversal ---
+
+@test "join: rejects a team name with path traversal (../)" {
+  run bash "$SCRIPTS/join.sh" "../../escape-join" alice claude-code /tmp/proj
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "path traversal" ]]
+  # Nothing was created outside teams/.
+  [ ! -f "$(dirname "$TEST_SKILL_DIR")/escape-join/config.json" ]
+}
+
+@test "join: rejects '..' and '.' as team names" {
+  run bash "$SCRIPTS/join.sh" ".." alice claude-code /tmp/proj
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "not allowed" ]]
+  run bash "$SCRIPTS/join.sh" "." alice claude-code /tmp/proj
+  [ "$status" -eq 1 ]
+}
+
+@test "join: rejects a team name starting with '-'" {
+  run bash "$SCRIPTS/join.sh" "-rf" alice claude-code /tmp/proj
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "must not start with" ]]
+}
+
+@test "join: rejects an empty team name" {
+  run bash "$SCRIPTS/join.sh" "" alice claude-code /tmp/proj
+  [ "$status" -ne 0 ]
+}
+
+@test "team: rejects a traversal team name" {
+  run bash "$SCRIPTS/team.sh" "../../escape-team"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "path traversal" ]]
+}
+
+@test "leave: rejects a traversal team name" {
+  run bash "$SCRIPTS/leave.sh" "../../escape-leave" alice
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "path traversal" ]]
+}
+
+@test "rename: rejects a traversal team name" {
+  run bash "$SCRIPTS/rename.sh" "../../escape-rename" old new
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "path traversal" ]]
+}
+
+@test "rename-team: rejects traversal on the new name and does not move outside teams/" {
+  bash "$SCRIPTS/join.sh" srcteam bob claude-code /tmp/proj
+  run bash "$SCRIPTS/rename-team.sh" srcteam "../../escape-renamed"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "path traversal" ]]
+  [ ! -f "$(dirname "$TEST_SKILL_DIR")/escape-renamed/config.json" ]
+  # Source team is untouched.
+  [ -f "$TEST_SKILL_DIR/teams/srcteam/config.json" ]
+}
+
+@test "rename-team: rejects traversal on the old name" {
+  run bash "$SCRIPTS/rename-team.sh" "../../escape-old" newteam
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "path traversal" ]]
+}
+
+@test "join: still accepts a UTF-8 (Japanese) team name" {
+  run bash "$SCRIPTS/join.sh" "テストチーム" alice claude-code /tmp/proj
+  [ "$status" -eq 0 ]
+  [ -f "$TEST_SKILL_DIR/teams/テストチーム/config.json" ]
+}
+
+@test "join: accepts hermes" {
+  run bash "$SCRIPTS/join.sh" myteam alice hermes /tmp/proj
+  [ "$status" -eq 0 ]
+  [ -f "$TEST_SKILL_DIR/teams/myteam/config.json" ]
+}

@@ -34,10 +34,35 @@ RUN_DIR="$SKILL_DIR/run"
 source "$SCRIPT_DIR/lib/actas-lock.sh"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/resolve-project.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/node.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/hash.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/storage.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/type-registry.sh"
 
 # Identity sanity check — no point launching a watcher with an empty pair set.
 PAIRS=$("$SCRIPT_DIR/identities.sh" "$PROJECT" "$TYPE" 2>/dev/null || true)
 [ -n "$PAIRS" ] || exit 0
+
+# Type-specific SessionStart behaviour (Template Method). A type may ship
+# scripts/drivers/types/<type>/_session-start.sh defining agmsg_session_start to override the
+# default no-op — codex uses it to hand the session off to the bridge. The plug
+# is sourced in this script's context so it sees PROJECT / RUN_DIR / SKILL_DIR /
+# PAIRS and the helpers sourced above; it may exit 0 (codex does, having no
+# Monitor tool) to skip the Monitor-directive path below.
+agmsg_session_start_default() { :; }
+
+_tdir="$(agmsg_type_dir "$TYPE" 2>/dev/null || true)"
+if [ -n "$_tdir" ] && [ -f "$_tdir/_session-start.sh" ]; then
+  # shellcheck disable=SC1090
+  . "$_tdir/_session-start.sh"
+  agmsg_session_start
+else
+  agmsg_session_start_default
+fi
 
 # Read hook input JSON from stdin. session_id field is sent for SessionStart.
 INPUT=$(cat 2>/dev/null || true)

@@ -7,21 +7,29 @@ set -euo pipefail
 
 TEAM="${1:?Usage: join.sh <team> <agent_id> <type> <project_path>}"
 AGENT_ID="${2:?Missing agent_id}"
-AGENT_TYPE="${3:?Missing type (claude-code | codex)}"
+AGENT_TYPE="${3:?Missing type (a registered type under scripts/drivers/types/<name>/)}"
 PROJECT_PATH="${4:?Missing project_path}"
 
-# Reject unknown agent types — the rest of agmsg (delivery.sh,
-# session-start.sh, identities.sh lookups) only supports the values listed
-# here. Allowing arbitrary strings silently mis-registers an agent and
-# makes monitor mode fail with a confusing "no joined teams" message.
-case "$AGENT_TYPE" in
-  claude-code|codex|gemini|antigravity|copilot) ;;
-  *) echo "Unknown agent type: '$AGENT_TYPE' (supported: claude-code, codex, gemini, antigravity, copilot)" >&2; exit 1 ;;
-esac
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/type-registry.sh"
+
+# Reject unknown agent types — the rest of agmsg (delivery.sh,
+# session-start.sh, identities.sh lookups) only supports registered types
+# (scripts/drivers/types/<name>/type.conf). Allowing arbitrary strings silently mis-registers an
+# agent and makes monitor mode fail with a confusing "no joined teams" message.
+if ! agmsg_is_known_type "$AGENT_TYPE"; then
+  echo "Unknown agent type: '$AGENT_TYPE' (supported: $(agmsg_known_types | sort -u | paste -sd, - | sed 's/,/, /g'))" >&2
+  exit 1
+fi
+
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEAMS_DIR="$SCRIPT_DIR/../teams"
+
+# Reject team names that would escape teams/ as a path segment (#140).
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/validate.sh"
+agmsg_validate_team_name "$TEAM" || exit 1
 
 # Resolve the session's real project root from the passed pwd (see #92), so an
 # agent-driven join from a subdir/worktree registers under the project the
@@ -30,6 +38,8 @@ TEAMS_DIR="$SCRIPT_DIR/../teams"
 # may not be registered yet) set AGMSG_RESOLVE_PROJECT=0 to keep their path.
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/resolve-project.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/storage.sh"
 PROJECT_PATH="$(agmsg_resolve_project "$PROJECT_PATH" "$AGENT_TYPE")"
 
 TEAM_CONFIG="$TEAMS_DIR/$TEAM/config.json"
@@ -48,18 +58,25 @@ EOF
 fi
 
 # --- Add or extend agent registrations ---
-CONFIG_ESCAPED=$(sed "s/'/''/g" "$TEAM_CONFIG")
-REGISTRATION="{\"type\":\"$AGENT_TYPE\",\"project\":\"$PROJECT_PATH\"}"
+CONFIG_SQL=$(agmsg_sql_readfile_path "$TEAM_CONFIG")
+AGENT_ID_SQL=$(printf '%s' "$AGENT_ID" | sed "s/'/''/g")
+AGENT_TYPE_SQL=$(printf '%s' "$AGENT_TYPE" | sed "s/'/''/g")
+PROJECT_SQL=$(printf '%s' "$PROJECT_PATH" | sed "s/'/''/g")
+REGISTRATION=$(sqlite3 :memory: "SELECT json_object('type', '$AGENT_TYPE_SQL', 'project', '$PROJECT_SQL');")
 REGISTRATION_ESCAPED=$(printf '%s' "$REGISTRATION" | sed "s/'/''/g")
 
-EXISTING=$(sqlite3 :memory: ".param set :json '$CONFIG_ESCAPED'" \
-  "SELECT json_extract(:json, '$.agents.$AGENT_ID');")
+EXISTING=$(agmsg_sqlite_mem "
+  WITH cfg AS (SELECT CAST(readfile('$CONFIG_SQL') AS TEXT) AS json)
+  SELECT value
+  FROM cfg, json_each(json_extract(cfg.json, '\$.agents'))
+  WHERE key = '$AGENT_ID_SQL';
+")
 
 if [ -z "$EXISTING" ] || [ "$EXISTING" = "null" ]; then
-  AGENT_OBJ="{\"registrations\":[${REGISTRATION}]}"
+  AGENT_OBJ=$(sqlite3 :memory: "SELECT json_object('registrations', json_array(json('$REGISTRATION_ESCAPED')));")
 else
   EXISTING_ESCAPED=$(printf '%s' "$EXISTING" | sed "s/'/''/g")
-  NORMALIZED=$(sqlite3 :memory: "
+  NORMALIZED=$(agmsg_sqlite_mem "
     WITH agent(a) AS (SELECT '$EXISTING_ESCAPED')
     SELECT CASE
       WHEN json_type(json_extract(a, '\$.registrations')) = 'array' THEN a
@@ -75,19 +92,19 @@ else
   ")
   NORMALIZED_ESCAPED=$(printf '%s' "$NORMALIZED" | sed "s/'/''/g")
 
-  HAS_REGISTRATION=$(sqlite3 :memory: "
+  HAS_REGISTRATION=$(agmsg_sqlite_mem "
     SELECT EXISTS(
       SELECT 1
       FROM json_each(json_extract('$NORMALIZED_ESCAPED', '\$.registrations'))
-      WHERE json_extract(value, '\$.type') = '$AGENT_TYPE'
-        AND json_extract(value, '\$.project') = '$PROJECT_PATH'
+      WHERE json_extract(value, '\$.type') = '$AGENT_TYPE_SQL'
+        AND json_extract(value, '\$.project') = '$PROJECT_SQL'
     );
   ")
 
   if [ "$HAS_REGISTRATION" = "1" ]; then
     AGENT_OBJ="$NORMALIZED"
   else
-    AGENT_OBJ=$(sqlite3 :memory: "
+    AGENT_OBJ=$(agmsg_sqlite_mem "
       SELECT json_set(
         '$NORMALIZED_ESCAPED',
         '\$.registrations[' || json_array_length(json_extract('$NORMALIZED_ESCAPED', '\$.registrations')) || ']',
@@ -97,9 +114,21 @@ else
   fi
 fi
 
-UPDATED=$(sqlite3 :memory: \
-  ".param set :json '$CONFIG_ESCAPED'" \
-  "SELECT json_set(:json, '$.agents.$AGENT_ID', json('$(printf '%s' "$AGENT_OBJ" | sed "s/'/''/g")'));")
+AGENT_OBJ_ESCAPED=$(printf '%s' "$AGENT_OBJ" | sed "s/'/''/g")
+UPDATED=$(agmsg_sqlite_mem \
+  "WITH cfg AS (SELECT CAST(readfile('$CONFIG_SQL') AS TEXT) AS json)
+  SELECT json_set(
+    cfg.json,
+    '\$.agents',
+    json_patch(
+      CASE
+        WHEN json_type(json_extract(cfg.json, '\$.agents')) = 'object' THEN json_extract(cfg.json, '\$.agents')
+        ELSE json('{}')
+      END,
+      json_object('$AGENT_ID_SQL', json('$AGENT_OBJ_ESCAPED'))
+    )
+  )
+  FROM cfg;")
 echo "$UPDATED" > "$TEAM_CONFIG"
 
 echo "Joined team $TEAM as $AGENT_ID"

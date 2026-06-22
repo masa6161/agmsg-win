@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib/storage.sh"
 DB="$(agmsg_db_path)"
 
-[ -f "$DB" ] || bash "$SCRIPT_DIR/init-db.sh" >/dev/null
+[ -f "$DB" ] || bash "$SCRIPT_DIR/internal/init-db.sh" >/dev/null
 
 INSERT="INSERT INTO messages (team, from_agent, to_agent, body) VALUES ('$TEAM', '$FROM', '$TO', '$(echo "$BODY" | sed "s/'/''/g")');"
 
@@ -23,7 +23,7 @@ INSERT="INSERT INTO messages (team, from_agent, to_agent, body) VALUES ('$TEAM',
 # busy_timeout, so re-running it waits for the schema, then the INSERT lands.
 # See #114.
 if ! agmsg_sqlite "$DB" "$INSERT" 2>/dev/null; then
-  bash "$SCRIPT_DIR/init-db.sh" >/dev/null
+  bash "$SCRIPT_DIR/internal/init-db.sh" >/dev/null
   agmsg_sqlite "$DB" "$INSERT"
 fi
 

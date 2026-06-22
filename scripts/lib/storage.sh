@@ -57,6 +57,52 @@ agmsg_db_path() {
 # PRAGMA returns its value as a row, which sqlite3 would print to stdout and
 # corrupt every SELECT's output (and the watch stream). `.timeout` sets the
 # same busy timeout silently.
+# sqlite3 >= 3.50 renders control bytes in CLI output using caret notation —
+# the char(31) record separator becomes the two literal chars "^_", and a CR
+# becomes "^M". That breaks the `IFS=$'\x1f' read` field splitting in
+# inbox/check-inbox/history and the monitor watch stream (#102), the same
+# sqlite3 >= 3.50 escaping behaviour behind #143. `-escape off` restores the
+# raw bytes. Older sqlite3 (< 3.50) doesn't know the option (and emits raw bytes
+# anyway), so probe once and only pass the flag when the build accepts it.
+_AGMSG_ESCAPE_FLAG=
+_AGMSG_ESCAPE_PROBED=
+_agmsg_escape_flag() {
+  if [ -z "$_AGMSG_ESCAPE_PROBED" ]; then
+    _AGMSG_ESCAPE_PROBED=1
+    if sqlite3 -escape off :memory: "SELECT 1;" >/dev/null 2>&1; then
+      _AGMSG_ESCAPE_FLAG="-escape off"
+    fi
+  fi
+  printf '%s' "$_AGMSG_ESCAPE_FLAG"
+}
+
 agmsg_sqlite() {
-  sqlite3 -cmd ".timeout ${AGMSG_BUSY_TIMEOUT:-5000}" "$@"
+  # shellcheck disable=SC2046  # intentional split: "-escape off" → two args, or none
+  sqlite3 $(_agmsg_escape_flag) -cmd ".timeout ${AGMSG_BUSY_TIMEOUT:-5000}" "$@"
+}
+
+# In-memory sqlite for JSON parsing / scalar lookups whose stdout is captured in
+# a command substitution ($(...)). On Windows, sqlite3.exe writes stdout in text
+# mode and turns every \n into \r\n; command substitution strips the trailing \n
+# but keeps the \r, so a captured "1" becomes "1\r" and string / integer
+# comparisons silently fail — hooks don't get written, counts misparse, etc.
+# (#130). Strip the CR; it is never a meaningful byte in a JSON or scalar result.
+# No busy_timeout (a :memory: db has no file lock) and no escape flag (these
+# call sites parse JSON/scalars, not the control-byte message stream).
+agmsg_sqlite_mem() {
+  sqlite3 :memory: "$@" | tr -d '\r'
+}
+
+# Turn a filesystem path into a form sqlite3's readfile() can open, then escape
+# it as a SQL string literal. On Windows, sqlite3.exe is a native binary that
+# can't open a Git Bash path like /d/a/agmsg/x.json — readfile() returns NULL
+# and the surrounding json parse silently yields no rows. cygpath -w converts to
+# the native D:\a\agmsg\x.json form first. No-op off Windows (cygpath absent).
+# Mirrors delivery.sh's sql_readfile_path for the registry readfile() sites.
+agmsg_sql_readfile_path() {
+  local path="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    path=$(cygpath -w "$path" 2>/dev/null || printf '%s' "$path")
+  fi
+  printf '%s' "$path" | sed "s/'/''/g"
 }

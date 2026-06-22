@@ -29,7 +29,30 @@
 
 : "${SKILL_DIR:?resolve-project.sh requires SKILL_DIR}"
 
+# agmsg_registered_projects() below reads team configs via readfile() and needs
+# agmsg_sql_readfile_path(). Not every caller that sources resolve-project.sh
+# also sources storage.sh (e.g. actas-claim.sh), so pull it in here. Re-sourcing
+# where the caller already has it just redefines the helpers — harmless.
+# shellcheck disable=SC1091
+. "$SKILL_DIR/scripts/lib/storage.sh"
+
 _agmsg_run_dir() { printf '%s/run' "$SKILL_DIR"; }
+
+# Canonicalize a directory path by resolving symlinks to its physical location.
+# Portable on purpose: `cd && pwd -P` works on macOS bash 3.2 (no GNU realpath)
+# and Linux alike. Falls back to the input unchanged when the path doesn't
+# exist or isn't a directory, so non-existent inputs still compare as their
+# literal value. The `cd` runs in a command-substitution subshell, so the
+# caller's working directory is never affected. See #160.
+agmsg_canonical_path() {
+  local p="$1" phys
+  [ -n "$p" ] || { printf '%s' "$p"; return 0; }
+  if phys=$(cd -- "$p" 2>/dev/null && pwd -P); then
+    printf '%s' "$phys"
+  else
+    printf '%s' "$p"
+  fi
+}
 
 # Map an agent type to the binary basename(s) its process may carry.
 _agmsg_agent_binaries() {
@@ -39,6 +62,7 @@ _agmsg_agent_binaries() {
     gemini)      echo "gemini" ;;
     antigravity) echo "antigravity" ;;
     copilot)     echo "copilot" ;;
+    opencode)    echo "opencode" ;;
     *)           echo "claude codex gemini" ;;
   esac
 }
@@ -135,23 +159,30 @@ agmsg_marker_gc_stale() {
 
 # List distinct registered project paths for <type>, one per line.
 agmsg_registered_projects() {
-  local type="$1" teams_dir="$SKILL_DIR/teams" config_file cfg_sql
+  local type="$1" teams_dir="$SKILL_DIR/teams" config_file cfg_sql type_sql
   [ -d "$teams_dir" ] || return 0
+  # Read config.json inside SQL via readfile() rather than binding it through a
+  # `.param set` dot-command — the sqlite3 shell tokenizer doesn't honour SQL ''
+  # escaping, so a config value with a single quote breaks the bind (#112). The
+  # path and type are interpolated as SQL string literals with '' doubling.
+  type_sql=$(printf '%s' "$type" | sed "s/'/''/g")
   for config_file in "$teams_dir"/*/config.json; do
     [ -f "$config_file" ] || continue
-    cfg_sql=$(sed "s/'/''/g" "$config_file")
-    sqlite3 :memory: ".param set :json '$cfg_sql'" "
-      WITH agents AS (
+    cfg_sql=$(agmsg_sql_readfile_path "$config_file")
+    sqlite3 :memory: "
+      WITH raw(json) AS (SELECT CAST(readfile('$cfg_sql') AS TEXT)),
+      cfg(json) AS (SELECT CASE WHEN json_valid(json) THEN json END FROM raw),
+      agents AS (
         SELECT CASE
           WHEN json_type(json_extract(value, '\$.registrations')) = 'array' THEN json_extract(value, '\$.registrations')
           ELSE json_array(json_object('type', json_extract(value, '\$.type'), 'project', json_extract(value, '\$.project')))
         END AS registrations
-        FROM json_each(json_extract(:json, '\$.agents'))
+        FROM cfg, json_each(json_extract(cfg.json, '\$.agents'))
       )
       SELECT DISTINCT json_extract(r.value, '\$.project')
       FROM agents, json_each(agents.registrations) AS r
-      WHERE json_extract(r.value, '\$.type') = '$type';
-    "
+      WHERE json_extract(r.value, '\$.type') = '$type_sql';
+    " | tr -d '\r'
   done
 }
 
