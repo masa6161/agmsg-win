@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -u
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib/compat.sh"
 
 # Stream new agmsg messages for the current session as they arrive.
 #
@@ -85,7 +87,7 @@ mkdir -p "$RUN_DIR" 2>/dev/null || true
 if [ -f "$PIDFILE" ]; then
   prev_pid=$(cat "$PIDFILE" 2>/dev/null || true)
   if [ -n "$prev_pid" ] && [ "$prev_pid" != "$$" ] && kill -0 "$prev_pid" 2>/dev/null; then
-    prev_cmd=$(ps -o args= -p "$prev_pid" 2>/dev/null || true)
+    prev_cmd=$(compat_get_cmdline "$prev_pid" 2>/dev/null || true)
     if [ -n "$prev_cmd" ]; then
       case "$prev_cmd" in
         *"$SKILL_DIR/scripts/watch.sh"*) kill "$prev_pid" 2>/dev/null || true ;;

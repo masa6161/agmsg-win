@@ -104,6 +104,7 @@ add_event_entry_file() {
   local event="$2"
   local cmd="$3"
   local windows_wrap="${4:-}"
+  local shell_override="${5:-}"
   local sql_path
   sql_path=$(sql_readfile_path "$path")
 
@@ -121,6 +122,11 @@ add_event_entry_file() {
     cw=$(windows_wrap "$cmd")
     cw_lit=$(printf '%s' "$cw" | sed "s/'/''/g")
     hook_obj="$hook_obj,'commandWindows','$cw_lit'"
+  fi
+  if [ -n "$shell_override" ]; then
+    local sh_lit
+    sh_lit=$(printf '%s' "$shell_override" | sed "s/'/''/g")
+    hook_obj="$hook_obj,'shell','$sh_lit'"
   fi
   hook_obj="$hook_obj)"
   local entry_sql="json_object('matcher','','hooks',json_array($hook_obj))"

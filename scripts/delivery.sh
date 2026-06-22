@@ -34,6 +34,8 @@ SKILL_NAME="$(basename "$SKILL_DIR")"
 RUN_DIR="$SKILL_DIR/run"
 # instance-id derivation (#93) for the in-session monitor directive below.
 # shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/compat.sh"
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/resolve-project.sh"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/instance-id.sh"
@@ -93,6 +95,15 @@ agmsg_delivery_apply_default() {
   local ww
   ww=$(agmsg_type_get "$type" hook_windows_wrap 2>/dev/null || true)
 
+  # On MSYS2, types without commandWindows wrapping (i.e. Claude Code) need
+  # "shell":"bash" so the agent routes hooks through Git Bash instead of
+  # PowerShell, which cannot execute POSIX .sh scripts.
+  local sh_override=""
+  if [ "$ww" != "yes" ]; then
+    _agmsg_detect_platform
+    [ "$_agmsg_platform" = "msys" ] && sh_override="bash"
+  fi
+
   # Work on a temp copy so a partially-modified file never replaces the
   # original until the whole chain succeeds.
   local tmp_state
@@ -113,20 +124,20 @@ agmsg_delivery_apply_default() {
     monitor)
       local ss="'$SKILL_DIR/scripts/session-start.sh' '$type' '$project'"
       local se="'$SKILL_DIR/scripts/session-end.sh'   '$type' '$project'"
-      add_event_entry_file "$tmp_state" "SessionStart" "$ss" "$ww"
-      add_event_entry_file "$tmp_state" "SessionEnd"   "$se" "$ww"
+      add_event_entry_file "$tmp_state" "SessionStart" "$ss" "$ww" "$sh_override"
+      add_event_entry_file "$tmp_state" "SessionEnd"   "$se" "$ww" "$sh_override"
       ;;
     turn)
       local cmd="'$SKILL_DIR/scripts/check-inbox.sh' '$type' '$project'"
-      add_event_entry_file "$tmp_state" "Stop" "$cmd" "$ww"
+      add_event_entry_file "$tmp_state" "Stop" "$cmd" "$ww" "$sh_override"
       ;;
     both)
       local ss="'$SKILL_DIR/scripts/session-start.sh' '$type' '$project'"
       local se="'$SKILL_DIR/scripts/session-end.sh'   '$type' '$project'"
       local st="'$SKILL_DIR/scripts/check-inbox.sh'   '$type' '$project'"
-      add_event_entry_file "$tmp_state" "SessionStart" "$ss" "$ww"
-      add_event_entry_file "$tmp_state" "SessionEnd"   "$se" "$ww"
-      add_event_entry_file "$tmp_state" "Stop"         "$st" "$ww"
+      add_event_entry_file "$tmp_state" "SessionStart" "$ss" "$ww" "$sh_override"
+      add_event_entry_file "$tmp_state" "SessionEnd"   "$se" "$ww" "$sh_override"
+      add_event_entry_file "$tmp_state" "Stop"         "$st" "$ww" "$sh_override"
       ;;
     off)
       : # already stripped
@@ -236,11 +247,7 @@ emit_monitor_directive() {
   # present (older CC, non-CC runtimes).
   local session_id="${CLAUDE_CODE_SESSION_ID:-}"
   if [ -z "$session_id" ]; then
-    if command -v uuidgen >/dev/null 2>&1; then
-      session_id="agmsg-$(uuidgen | tr 'A-Z' 'a-z')"
-    else
-      session_id="agmsg-$(date +%s)-$$"
-    fi
+    session_id="agmsg-$(compat_uuidgen | tr 'A-Z' 'a-z')"
   fi
 
   # Key the watcher on the per-process instance id (#93) so parallel
@@ -419,7 +426,7 @@ kill_all_watchers() {
         # Defensive: only kill if the pid's command line still looks like
         # our watch.sh. Defends against pid recycling — a stale pidfile
         # could point at an unrelated process that reused the pid.
-        cmd=$(ps -o args= -p "$pid" 2>/dev/null || true)
+        cmd=$(compat_get_cmdline "$pid" 2>/dev/null || true)
         case "$cmd" in
           *"$SKILL_DIR/scripts/watch.sh"*)
             # watch.sh argv is "watch.sh <session_id> <project> <type> [name]",
