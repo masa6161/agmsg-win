@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib/compat.sh"
 
 # Check inbox across all teams with cooldown. Skips if last check was < 60 seconds ago.
 # Usage: check-inbox.sh <type> <project_path>
@@ -91,11 +93,7 @@ fi
 MARKER="$SKILL_DIR/run/.lastcheck-$AGENT"
 
 if [ -f "$MARKER" ]; then
-  if [ "$(uname)" = "Darwin" ]; then
-    last=$(stat -f %m "$MARKER")
-  else
-    last=$(stat -c %Y "$MARKER")
-  fi
+  last=$(compat_file_mtime "$MARKER")
   now=$(date +%s)
   # Prefer the new delivery.turn.check_interval; fall back to legacy
   # hook.check_interval for users who haven't migrated.
