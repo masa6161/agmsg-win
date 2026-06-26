@@ -293,6 +293,76 @@ JSON
   [[ ! "$output" =~ "invoke the Monitor tool" ]]
 }
 
+# --- watcher teardown is (project, type)-scoped (#218) ---
+# claude-code is the only type that runs a watch.sh watcher. Before scoping,
+# `set turn <any other type>` ran `kill_all_watchers "$PROJECT"` (project only)
+# and tore down the project's claude-code monitor — collateral that killed
+# unrelated agents' monitors on a shared machine.
+
+@test "delivery set turn (other type): does NOT kill the project's claude-code watcher (#218)" {
+  skip_on_windows "watcher process mgmt under Git Bash (#182)"
+  mkdir -p "$TEST_SKILL_DIR/teams/myteam"
+  cat > "$TEST_SKILL_DIR/teams/myteam/config.json" <<JSON
+{"name":"myteam","agents":{"alice":{"registrations":[{"type":"claude-code","project":"$TEST_PROJECT"}]}}}
+JSON
+  # A live claude-code watcher for this project.
+  AGMSG_WATCH_INTERVAL=10 bash "$SCRIPTS/watch.sh" cc-sess "$TEST_PROJECT" claude-code &
+  local watch_pid=$!
+  sleep 1
+  [ -f "$TEST_SKILL_DIR/run/watch.cc-sess.pid" ]
+  # Switching a DIFFERENT type's delivery in the SAME project must not touch it.
+  run bash "$SCRIPTS/delivery.sh" set turn copilot "$TEST_PROJECT"
+  [ "$status" -eq 0 ]
+  [ -f "$TEST_SKILL_DIR/run/watch.cc-sess.pid" ]
+  kill -0 "$watch_pid" 2>/dev/null
+  kill "$watch_pid" 2>/dev/null || true
+}
+
+@test "delivery set off (claude-code): DOES kill the project's claude-code watcher (type matches)" {
+  skip_on_windows "watcher process mgmt under Git Bash (#182)"
+  mkdir -p "$TEST_SKILL_DIR/teams/myteam"
+  cat > "$TEST_SKILL_DIR/teams/myteam/config.json" <<JSON
+{"name":"myteam","agents":{"alice":{"registrations":[{"type":"claude-code","project":"$TEST_PROJECT"}]}}}
+JSON
+  AGMSG_WATCH_INTERVAL=10 bash "$SCRIPTS/watch.sh" cc-sess2 "$TEST_PROJECT" claude-code &
+  local watch_pid=$!
+  sleep 1
+  [ -f "$TEST_SKILL_DIR/run/watch.cc-sess2.pid" ]
+  run bash "$SCRIPTS/delivery.sh" set off claude-code "$TEST_PROJECT"
+  [ "$status" -eq 0 ]
+  [ ! -f "$TEST_SKILL_DIR/run/watch.cc-sess2.pid" ]
+  sleep 1
+  ! kill -0 "$watch_pid" 2>/dev/null
+}
+
+@test "delivery (project, type) scoping holds for a project path with spaces (#218)" {
+  skip_on_windows "watcher process mgmt under Git Bash (#182)"
+  # The argv match is the literal "<project> <type>" string, so a space in the
+  # project path is matched verbatim — no false negatives (target preserved/
+  # killed correctly) and no false positives across the space boundary.
+  local sp="$TEST_PROJECT/with space proj"
+  mkdir -p "$sp"
+  mkdir -p "$TEST_SKILL_DIR/teams/myteam"
+  cat > "$TEST_SKILL_DIR/teams/myteam/config.json" <<JSON
+{"name":"myteam","agents":{"alice":{"registrations":[{"type":"claude-code","project":"$sp"}]}}}
+JSON
+  AGMSG_WATCH_INTERVAL=10 bash "$SCRIPTS/watch.sh" sp-sess "$sp" claude-code &
+  local watch_pid=$!
+  sleep 1
+  [ -f "$TEST_SKILL_DIR/run/watch.sp-sess.pid" ]
+  # Another type's set turn in the SAME space-containing project: must NOT kill it.
+  run bash "$SCRIPTS/delivery.sh" set turn copilot "$sp"
+  [ "$status" -eq 0 ]
+  [ -f "$TEST_SKILL_DIR/run/watch.sp-sess.pid" ]
+  kill -0 "$watch_pid" 2>/dev/null
+  # claude-code off for the SAME space-containing project: must kill it (right target).
+  run bash "$SCRIPTS/delivery.sh" set off claude-code "$sp"
+  [ "$status" -eq 0 ]
+  [ ! -f "$TEST_SKILL_DIR/run/watch.sp-sess.pid" ]
+  sleep 1
+  ! kill -0 "$watch_pid" 2>/dev/null
+}
+
 # --- watch.sh signal handling ---
 
 @test "watch.sh exits promptly on SIGTERM and cleans its pidfile" {
@@ -357,6 +427,47 @@ JSON
   touch "$TEST_SKILL_DIR/run/cc-instance.$dead_pid"
   echo '{"session_id":"x"}' | bash "$SCRIPTS/session-start.sh" claude-code "$TEST_PROJECT" >/dev/null
   [ ! -f "$TEST_SKILL_DIR/run/cc-instance.$dead_pid" ]
+}
+
+# --- session-id resolution: vendor field-name differences (grok/cursor) ---
+# Grok Build emits the session id on stdin as camelCase "sessionId" and injects
+# GROK_SESSION_ID into every hook; Claude uses snake_case "session_id". The
+# shared resolver tries snake -> camel -> $GROK_SESSION_ID. The Monitor
+# directive echoes the resolved id as the watch.sh command's session arg, so we
+# assert through that. (Exercised via claude-code since the resolver is shared.)
+
+@test "session-start: resolves camelCase sessionId from stdin (grok/cursor field)" {
+  env AGMSG_RESOLVE_PROJECT=0 bash "$SCRIPTS/join.sh" team alice claude-code "$TEST_PROJECT" >/dev/null
+  bash "$SCRIPTS/delivery.sh" set monitor claude-code "$TEST_PROJECT" >/dev/null
+  run env AGMSG_RESOLVE_PROJECT=0 bash "$SCRIPTS/session-start.sh" claude-code "$TEST_PROJECT" <<<'{"sessionId":"grokCamelSID"}'
+  [ "$status" -eq 0 ]
+  local cmdline
+  cmdline=$(printf '%s\n' "$output" | sed -n 's/^[[:space:]]*command: //p')
+  eval "set -- $cmdline"
+  [[ "$2" =~ grokCamelSID ]]
+}
+
+@test "session-start: falls back to GROK_SESSION_ID env when stdin lacks a session id" {
+  env AGMSG_RESOLVE_PROJECT=0 bash "$SCRIPTS/join.sh" team alice claude-code "$TEST_PROJECT" >/dev/null
+  bash "$SCRIPTS/delivery.sh" set monitor claude-code "$TEST_PROJECT" >/dev/null
+  run env AGMSG_RESOLVE_PROJECT=0 GROK_SESSION_ID=grokEnvSID bash "$SCRIPTS/session-start.sh" claude-code "$TEST_PROJECT" <<<'{}'
+  [ "$status" -eq 0 ]
+  local cmdline
+  cmdline=$(printf '%s\n' "$output" | sed -n 's/^[[:space:]]*command: //p')
+  eval "set -- $cmdline"
+  [[ "$2" =~ grokEnvSID ]]
+}
+
+@test "session-start: snake_case session_id still wins over camelCase (claude-code unaffected)" {
+  env AGMSG_RESOLVE_PROJECT=0 bash "$SCRIPTS/join.sh" team alice claude-code "$TEST_PROJECT" >/dev/null
+  bash "$SCRIPTS/delivery.sh" set monitor claude-code "$TEST_PROJECT" >/dev/null
+  run env AGMSG_RESOLVE_PROJECT=0 bash "$SCRIPTS/session-start.sh" claude-code "$TEST_PROJECT" <<<'{"session_id":"snakeWins","sessionId":"camelLoses"}'
+  [ "$status" -eq 0 ]
+  local cmdline
+  cmdline=$(printf '%s\n' "$output" | sed -n 's/^[[:space:]]*command: //p')
+  eval "set -- $cmdline"
+  [[ "$2" =~ snakeWins ]]
+  [[ ! "$2" =~ camelLoses ]]
 }
 
 # --- SessionEnd hook integration ---
@@ -1454,4 +1565,55 @@ JSON
 
   kill "$watch_pid" 2>/dev/null || true
   wait 2>/dev/null || true
+}
+
+# --- grok-build (turn|off via a markdown rule file .grok/rules/agmsg.md) ---
+# Grok passive hooks can't inject (stdout is discarded), so grok delivers via the
+# rule-file self-poll model (like gemini/opencode): a .grok/rules/agmsg.md that
+# tells the agent to poll inbox.sh each turn. turn => rule present, off => absent.
+
+@test "delivery set turn (grok-build): writes .grok/rules/agmsg.md self-poll rule" {
+  run bash "$SCRIPTS/delivery.sh" set turn grok-build "$TEST_PROJECT"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "Delivery mode set to 'turn'" ]]
+  local rule_file="$TEST_PROJECT/.grok/rules/agmsg.md"
+  [ -f "$rule_file" ]
+  # The rule points at inbox.sh (clean display + same-call mark = loss-safe),
+  # not the hook-only check-inbox.sh, and references this type + project.
+  run cat "$rule_file"
+  [[ "$output" == *"inbox.sh"* ]]
+  [[ "$output" != *"check-inbox.sh"* ]]
+  [[ "$output" == *"grok-build"* ]]
+  [[ "$output" == *"$TEST_PROJECT"* ]]
+}
+
+@test "delivery set off (grok-build): removes the rule file" {
+  bash "$SCRIPTS/delivery.sh" set turn grok-build "$TEST_PROJECT"
+  [ -f "$TEST_PROJECT/.grok/rules/agmsg.md" ]
+  run bash "$SCRIPTS/delivery.sh" set off grok-build "$TEST_PROJECT"
+  [ "$status" -eq 0 ]
+  [ ! -f "$TEST_PROJECT/.grok/rules/agmsg.md" ]
+}
+
+@test "delivery set monitor (grok-build): rejected; no rule file written" {
+  run bash "$SCRIPTS/delivery.sh" set monitor grok-build "$TEST_PROJECT"
+  [ "$status" -ne 0 ]
+  [[ "$output" =~ "not supported" ]]
+  [ ! -f "$TEST_PROJECT/.grok/rules/agmsg.md" ]
+}
+
+@test "delivery set both (grok-build): rejected; does NOT delete an existing turn rule" {
+  bash "$SCRIPTS/delivery.sh" set turn grok-build "$TEST_PROJECT" >/dev/null
+  run bash "$SCRIPTS/delivery.sh" set both grok-build "$TEST_PROJECT"
+  [ "$status" -ne 0 ]
+  [ -f "$TEST_PROJECT/.grok/rules/agmsg.md" ]
+}
+
+@test "delivery status (grok-build): derives mode from rule file existence" {
+  run bash "$SCRIPTS/delivery.sh" status grok-build "$TEST_PROJECT"
+  [[ "$output" =~ "mode: off" ]]
+
+  bash "$SCRIPTS/delivery.sh" set turn grok-build "$TEST_PROJECT"
+  run bash "$SCRIPTS/delivery.sh" status grok-build "$TEST_PROJECT"
+  [[ "$output" =~ "mode: turn" ]]
 }

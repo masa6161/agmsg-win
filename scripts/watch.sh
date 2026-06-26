@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -u
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "$0")" && pwd)/lib/compat.sh"
 
 # Stream new agmsg messages for the current session as they arrive.
 #
@@ -85,7 +87,7 @@ mkdir -p "$RUN_DIR" 2>/dev/null || true
 if [ -f "$PIDFILE" ]; then
   prev_pid=$(cat "$PIDFILE" 2>/dev/null || true)
   if [ -n "$prev_pid" ] && [ "$prev_pid" != "$$" ] && kill -0 "$prev_pid" 2>/dev/null; then
-    prev_cmd=$(ps -o args= -p "$prev_pid" 2>/dev/null || true)
+    prev_cmd=$(compat_get_cmdline "$prev_pid" 2>/dev/null || true)
     if [ -n "$prev_cmd" ]; then
       case "$prev_cmd" in
         *"$SKILL_DIR/scripts/watch.sh"*) kill "$prev_pid" 2>/dev/null || true ;;
@@ -245,6 +247,21 @@ if [ -z "$LAST" ]; then
   persist_watermark
 fi
 
+# DB-open healthcheck (#197). The main loop guards every query with
+# `2>/dev/null || true`, so when sqlite3 cannot open the store the watcher keeps
+# spinning and silently delivers nothing — a silent outage. The native
+# sqlite3.exe / Git Bash path mismatch behind #197 is one trigger (now fixed in
+# agmsg_db_path), but permissions, a missing binary, or a corrupt file fail the
+# same way. A *missing* DB file is normal (no messages sent yet), so only flag
+# the case where the file exists but a trivial query cannot run: emit one line
+# on stdout (the Monitor event stream) and exit, turning the silent failure into
+# a visible one. Done before the ready sentinel so we never signal "ready" for a
+# watcher that cannot read the store.
+if [ -f "$DB" ] && ! agmsg_sqlite "$DB" "SELECT 1;" >/dev/null 2>&1; then
+  echo "ERROR: cannot open message DB $DB"
+  exit 1
+fi
+
 # Signal readiness. Once the subscription is resolved and the watermark is set,
 # this watcher will deliver anything that arrives from here on, so it is safe
 # for a leader to start sending. Only exclusive (actas) watchers signal — a
@@ -264,6 +281,18 @@ if [ -n "$ACTIVE_NAME" ]; then
 fi
 
 while true; do
+  # Liveness guard (#67): exit promptly once the originating agent session is
+  # gone. A plain pipe gives no portable way to notice a *downstream* consumer
+  # that closed silently — printf '' raises no EPIPE, and macOS buffers a final
+  # write into an already-dead reader — so a quiet watcher whose session died
+  # would otherwise spin forever (the macOS-runner 33-min stall; #210's job
+  # timeout only caps the symptom). `kill -0` on the agent pid embedded in the
+  # composite instance id is portable (Git Bash falls back to tasklist; see
+  # _agmsg_pid_alive). Gated on a composite id only: a bare id (degraded, no
+  # resolved agent pid) keeps the prior behavior and is not liveness-gated.
+  if agmsg_instance_is_composite "$SESSION_ID" && ! agmsg_instance_alive "$SESSION_ID"; then
+    exit 0
+  fi
   if [ -f "$DB" ]; then
     ROWS="$(agmsg_sqlite -separator $'\x1f' "$DB" "
       SELECT id, created_at, team, from_agent, to_agent,

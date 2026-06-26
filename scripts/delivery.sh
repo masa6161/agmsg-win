@@ -34,6 +34,8 @@ SKILL_NAME="$(basename "$SKILL_DIR")"
 RUN_DIR="$SKILL_DIR/run"
 # instance-id derivation (#93) for the in-session monitor directive below.
 # shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/compat.sh"
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/resolve-project.sh"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/instance-id.sh"
@@ -151,9 +153,11 @@ agmsg_delivery_apply_default() {
 # A plug that wants the default apply can delegate to agmsg_delivery_apply_default.
 agmsg_delivery_apply() { agmsg_delivery_apply_default "$@"; }
 agmsg_delivery_on_enable() { :; }
-# Default 'off' teardown: stop this project's watch.sh watchers. A type with its
-# own runtime (e.g. codex's bridge) overrides this. Args: <type> <project>.
-agmsg_delivery_on_disable() { kill_all_watchers "$2" >/dev/null 2>&1 || true; }
+# Default 'off' teardown: stop this (project, type)'s watch.sh watchers. A type
+# with its own runtime (e.g. codex's bridge) overrides this. Args: <type>
+# <project>. Passing the type scopes the kill so disabling one type's delivery
+# never tears down another type's watcher in the same project.
+agmsg_delivery_on_disable() { kill_all_watchers "$2" "$1" >/dev/null 2>&1 || true; }
 
 # Default delivery status (json-hooks types: claude-code, codex). Derives the mode
 # from the settings hooks file's agmsg-owned SessionStart/Stop entries, then prints
@@ -236,11 +240,7 @@ emit_monitor_directive() {
   # present (older CC, non-CC runtimes).
   local session_id="${CLAUDE_CODE_SESSION_ID:-}"
   if [ -z "$session_id" ]; then
-    if command -v uuidgen >/dev/null 2>&1; then
-      session_id="agmsg-$(uuidgen | tr 'A-Z' 'a-z')"
-    else
-      session_id="agmsg-$(date +%s)-$$"
-    fi
+    session_id="agmsg-$(compat_uuidgen | tr 'A-Z' 'a-z')"
   fi
 
   # Key the watcher on the per-process instance id (#93) so parallel
@@ -356,8 +356,11 @@ do_set() {
       ;;
     turn)
       echo "Future sessions: Stop hook will check inbox between turns."
-      # Stop only THIS project's watcher; other projects/sessions keep theirs.
-      kill_all_watchers "$PROJECT" >/dev/null 2>&1 || true
+      # Stop only THIS (project, type)'s watcher; other types in this project,
+      # and other projects, keep theirs. (Before scoping, this killed every
+      # watcher in the project — so any type's `set turn` tore down the
+      # project's claude-code monitor, the only type that runs one.)
+      kill_all_watchers "$PROJECT" "$TYPE" >/dev/null 2>&1 || true
       emit_stop_directive
       ;;
     off)
@@ -409,12 +412,22 @@ do_status() {
 }
 
 kill_all_watchers() {
-  # With no argument, kills every running watch.sh (used by stop/restart).
-  # With a <project> argument, kills only watchers launched for that project
-  # path, so switching one project's delivery mode (set turn/off) never tears
-  # down another project's — or another concurrent session's — monitor.
-  local project="${1:-}"
+  # With no argument, kills every running watch.sh (used by stop). With a
+  # <project> argument — and, when given, a <type> — kills only watchers whose
+  # argv matches. watch.sh argv is "watch.sh <session_id> <project> <type>
+  # [name]", so <project> <type> are adjacent space-delimited fields. Scoping to
+  # (project, type) means switching one (project, type)'s delivery mode never
+  # tears down another project's watcher OR another agent type's watcher in the
+  # SAME project — which, because claude-code is the only type with a watcher,
+  # is exactly the collateral kill that a non-claude `set turn` used to cause.
+  local project="${1:-}" type="${2:-}"
   local killed=0
+  # The argv substring to scope to: "<project> <type>" when a type is given
+  # (exact adjacent fields), else just "<project>", else empty (match all).
+  local needle=""
+  if [ -n "$project" ]; then
+    if [ -n "$type" ]; then needle=" $project $type "; else needle=" $project "; fi
+  fi
   if [ -d "$RUN_DIR" ]; then
     for f in "$RUN_DIR"/watch.*.pid; do
       [ -f "$f" ] || continue
@@ -424,15 +437,15 @@ kill_all_watchers() {
         # Defensive: only kill if the pid's command line still looks like
         # our watch.sh. Defends against pid recycling — a stale pidfile
         # could point at an unrelated process that reused the pid.
-        cmd=$(ps -o args= -p "$pid" 2>/dev/null || true)
+        cmd=$(compat_get_cmdline "$pid" 2>/dev/null || true)
         case "$cmd" in
           *"$SKILL_DIR/scripts/watch.sh"*)
-            # watch.sh argv is "watch.sh <session_id> <project> <type> [name]",
-            # so the project path is a space-delimited field. When scoped,
-            # skip (and preserve the pidfile of) watchers for other projects.
-            if [ -n "$project" ]; then
+            # When scoped, skip (and preserve the pidfile of) watchers that don't
+            # match this (project, type) — i.e. other projects, and other types
+            # in the same project.
+            if [ -n "$needle" ]; then
               case " $cmd " in
-                *" $project "*) ;;
+                *"$needle"*) ;;
                 *) continue ;;
               esac
             fi
@@ -457,7 +470,11 @@ do_restart() {
   local TYPE="${1:-}"
   local PROJECT="${2:-}"
   local killed
-  killed=$(kill_all_watchers)
+  # Restart only the targeted (project, type)'s watcher when args are given; a
+  # bare `restart` (no args) still tears down every watcher. Same (project,
+  # type) scoping as `set`, so restarting one type's delivery doesn't kill an
+  # unrelated project's or type's watcher.
+  killed=$(kill_all_watchers "$PROJECT" "$TYPE")
   echo "Killed $killed watch process(es)."
   if [ -n "$TYPE" ] && [ -n "$PROJECT" ]; then
     emit_stop_directive
