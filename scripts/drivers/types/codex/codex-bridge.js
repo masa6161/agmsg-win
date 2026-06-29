@@ -339,6 +339,9 @@ class WebSocketAppServerClient {
     this.handshakeComplete = false;
     this.handshakeBuffer = Buffer.alloc(0);
     this.startPromise = null;
+    // Set when WE close the socket (shutdown); distinguishes an intentional stop
+    // from the app-server going away under us.
+    this.intentionalStop = false;
   }
 
   start() {
@@ -399,7 +402,20 @@ class WebSocketAppServerClient {
       this.socket.on("close", () => {
         const error = new Error(`app-server connection closed (${this.label})`);
         this.rejectAll(error);
-        if (!this.handshakeComplete) finish(error);
+        if (!this.handshakeComplete) {
+          finish(error);
+          return;
+        }
+        // The app-server went away after we were connected (e.g. it was killed
+        // and recreated on a codex upgrade). A bridge that lingers here keeps a
+        // live pidfile, so the launcher reuses this now-dead bridge and never
+        // starts a fresh one against the new app-server — delivery silently
+        // stops. Exit instead; the launcher then relaunches a fresh bridge bound
+        // to the current app-server. Skipped when WE closed the socket.
+        if (!this.intentionalStop) {
+          console.error(`codex-bridge: ${error.message}; exiting so a fresh bridge can attach`);
+          process.exit(1);
+        }
       });
     });
   }
@@ -617,6 +633,7 @@ class WebSocketAppServerClient {
   }
 
   stop() {
+    this.intentionalStop = true;
     this.connected = false;
     if (this.socket && !this.socket.destroyed) {
       this.socket.destroy();

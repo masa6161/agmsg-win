@@ -32,7 +32,12 @@ source "$(cd "$(dirname "$0")" && pwd)/lib/compat.sh"
 #   - Writes a pidfile at ~/.agents/agmsg/run/watch.<session_id>.pid and
 #     removes it on EXIT / SIGTERM / SIGINT.
 
-SESSION_ID="${1:?Usage: watch.sh <session_id> <project_path> <agent_type> [active_name]}"
+# session_id is normally baked into the launch command (CLAUDE_CODE_SESSION_ID /
+# GROK_SESSION_ID). An empty first arg is tolerated and resolved below (after the
+# libs are sourced) rather than failing hard, so a runtime that cannot bake one
+# in — notably Grok Build's `monitor` tool, where "$GROK_SESSION_ID" expands to
+# empty — still starts the watcher. project_path and agent_type are required.
+SESSION_ID="${1:-}"
 PROJECT_PATH="${2:?Missing project_path}"
 AGENT_TYPE="${3:?Missing agent_type}"
 ACTIVE_NAME="${4:-}"
@@ -44,6 +49,30 @@ source "$SCRIPT_DIR/lib/storage.sh"
 source "$SCRIPT_DIR/lib/actas-lock.sh"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/resolve-project.sh"
+
+# Resolve a session id when the launcher could not bake one in (empty first arg).
+# Grok Build's `monitor` tool runs the watcher with $GROK_SESSION_ID unset, so
+# neither the env var nor the instance-id ppid walk (it keys on the claude/codex
+# agent binaries) yields grok's session. Bind to a composite "<session_id>.<grok
+# _pid>" instead — keyed this way the watermark/pidfile are stable across watcher
+# relaunches (no replay gap) and liveness-gated on the grok pid, so the watcher
+# self-exits once grok dies rather than lingering as a bare-id orphan (#245).
+# agmsg_grok_instance_id handles both `grok --resume <id>` and a fresh `grok`
+# (no --resume). Fall back to a throwaway id only if no live grok is found, so the
+# watcher still starts (#238). Uses the raw project path the watcher was launched
+# with, before agmsg_resolve_project rewrites it, to match grok's session dir.
+if [ -z "$SESSION_ID" ]; then
+  case "$AGENT_TYPE" in
+    grok-build)
+      SESSION_ID="$(agmsg_grok_instance_id "$PROJECT_PATH" 2>/dev/null || true)"
+      # A fresh grok watcher reaps bare-id grok watchers left behind by older
+      # (pre-composite) versions whose grok has since exited (#245). Specific-PID
+      # kill only — never a pattern kill.
+      agmsg_reap_orphan_grok_watchers "$PROJECT_PATH" "$$" 2>/dev/null || true
+      ;;
+  esac
+  [ -z "$SESSION_ID" ] && SESSION_ID="agmsg-$(compat_uuidgen | tr 'A-Z' 'a-z')"
+fi
 
 # Resolve the session's real project root (see #92). The actas/drop/ensure-
 # monitor flows relaunch this watcher with a raw "$(pwd)"; without resolution a

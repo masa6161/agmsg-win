@@ -46,20 +46,27 @@ Four possible outputs:
      ```
      Choose delivery mode for incoming messages:
 
-       1) turn — Check inbox at the end of each assistant turn
-                  A .grok/rules/agmsg.md rule has you self-check inbox.sh
-                  each turn (Grok hooks can't push, so delivery is self-poll).
+       1) turn    — Check inbox at the end of each assistant turn
+                     A .grok/rules/agmsg.md rule has you self-check inbox.sh
+                     each turn. Zero setup; no background watcher.
 
-       2) off  — No automatic delivery
-                  Manual /__SKILL_NAME__ only.
+       2) monitor — Real-time push via the `monitor` tool (BETA)
+                     Launches watch.sh through the `monitor` tool (NOT
+                     run_terminal_command); each new message streams in as a
+                     notification. You launch it explicitly (Grok hooks can't
+                     auto-start it at SessionStart). BETA: still stabilizing —
+                     turn mode is the stable default.
+
+       3) off     — No automatic delivery
+                     Manual /__SKILL_NAME__ only.
 
      [1]:
      ```
 
      - **Wait for the user's answer before proceeding.** Empty input means `1` (turn).
-     - Map the chosen number to a mode (`1`→`turn`, `2`→`off`) and run:
+     - Map the chosen number to a mode (`1`→`turn`, `2`→`monitor`, `3`→`off`) and run:
        `~/.agents/skills/__SKILL_NAME__/scripts/delivery.sh set <mode> grok-build "$(pwd)"`
-     - Grok Build has no Monitor-tool equivalent, so `monitor` and `both` modes are not offered here.
+     - If you chose `monitor`, tell the user it is a **BETA** that is still stabilizing (turn mode is the stable default). Then read the `AGMSG-DIRECTIVE` block that `delivery.sh` prints and follow it now: invoke the `monitor` tool with the given `command` / `description` / `persistent: true` so the watcher starts streaming into this session. `both` is not supported.
 
   6. Then check inbox for the newly joined team.
 
@@ -76,6 +83,18 @@ Four possible outputs:
 ## Execute
 
 **Only use scripts in `~/.agents/skills/__SKILL_NAME__/scripts/` — do not read or modify files under `teams/` or `db/` directly.**
+
+**Ensure the monitor is running first (monitor mode only).** If the project's delivery mode is `monitor` (check via `~/.agents/skills/__SKILL_NAME__/scripts/delivery.sh status grok-build "$(pwd)"`) and no `agmsg inbox stream` watcher is running in this session yet, invoke the `monitor` tool now (before the subcommand below):
+
+- command: `~/.agents/skills/__SKILL_NAME__/scripts/watch.sh "$GROK_SESSION_ID" "$(pwd)" grok-build`
+- description: `agmsg inbox stream`
+- persistent: true
+
+Pass the `command` to the `monitor` tool **exactly as written** — do **not** append `| head`, `| tail`, any other pipe, or a redirection. Each watcher line is one message; a closed downstream pipe (e.g. `head` exiting after N lines) makes the watcher's writes fail and messages after the Nth are dropped silently.
+
+Launch it with the **`monitor` tool only** — **never** `run_terminal_command` (with or without `background: true`) and **never** a hand-rolled `tail -f` of a log. Only the `monitor` tool surfaces the stream into this conversation; a terminal/background launch writes to a log you never see, so messages keep arriving but you silently miss them (and stray watcher tasks pile up). After launching, confirm a live `monitor` task named `agmsg inbox stream` exists; if you don't see one (e.g. you launched it as a terminal/background command by mistake), stop that and relaunch via the `monitor` tool.
+
+Each output line is one message: `<ts> | <team> | <from> -> <to> | <body>`. React to messages as they arrive; reply with `send.sh`. Launch it only once — if a watcher is already streaming, do not start a second one. In `turn`/`off` mode there is no watcher; skip this.
 
 **If no arguments provided (DEFAULT action — always do this when the command is invoked without arguments):**
 1. **IMMEDIATELY** run inbox check for each TEAM: `~/.agents/skills/__SKILL_NAME__/scripts/inbox.sh $TEAM $AGENT`
@@ -107,22 +126,33 @@ If argument starts with "actas" followed by an agent name (e.g. "actas alice"):
 1. Parse the new role name.
 2. Run `~/.agents/skills/__SKILL_NAME__/scripts/identities.sh "$(pwd)" grok-build` to see whether the role is already registered for this (project, type).
 3. If the name does not appear in the output, join under the existing team. For a single team, run `~/.agents/skills/__SKILL_NAME__/scripts/join.sh <team> <name> grok-build "$(pwd)"`. For multiple teams, ask the user which team to join the new role into.
-4. Set the session's active FROM to `<name>` for every `send.sh` call until another `actas`.
-5. Tell the user: "Now acting as `<name>`. Sends will use `<name>` as the from agent. (Grok Build has no Monitor tool, so receive still covers all of your registered roles in this project.)"
+4. **If delivery mode is `monitor`**, switch the watcher to the new role so receive is restricted to it:
+   a. If an `agmsg inbox stream` watcher is already running in this session, stop it with `kill_command_or_subagent` on its task id.
+   b. Launch a fresh watcher with the `monitor` tool (persistent):
+      - command: `~/.agents/skills/__SKILL_NAME__/scripts/watch.sh "$GROK_SESSION_ID" "$(pwd)" grok-build <name>`
+      - description: `agmsg inbox stream`
+   The 4th argument restricts the subscription to messages addressed to `<name>` only. In `turn`/`off` mode there is no watcher to switch — skip this step.
+5. Set the session's active FROM to `<name>` for every `send.sh` call until another `actas`.
+6. Tell the user: "Now acting as `<name>`. Sends use `<name>` as from. In monitor mode, receive is restricted to `<name>`; in turn/off mode receive still covers all your registered roles."
 
 If argument starts with "drop" followed by an agent name (e.g. "drop alice"):
 1. Parse the role name.
 2. Run `~/.agents/skills/__SKILL_NAME__/scripts/reset.sh "$(pwd)" grok-build <name>` to remove that role's registration.
 3. If the session's active FROM was `<name>`, clear that state.
-4. Tell the user: "Dropped role `<name>` from this project."
+4. **If delivery mode is `monitor`** and an `agmsg inbox stream` watcher is running in this session, stop it with `kill_command_or_subagent`, then relaunch it with the `monitor` tool using the default (no 4th arg) subscription so receive covers the project's remaining roles:
+   - command: `~/.agents/skills/__SKILL_NAME__/scripts/watch.sh "$GROK_SESSION_ID" "$(pwd)" grok-build`
+   - description: `agmsg inbox stream`
+   - persistent: true
+5. Tell the user: "Dropped role `<name>` from this project."
 
 If argument is "mode" (no further args):
 1. Run: `~/.agents/skills/__SKILL_NAME__/scripts/delivery.sh status grok-build "$(pwd)"`
 2. Show the output to the user.
 
 If argument starts with "mode" followed by a mode name (e.g. "mode turn"):
-1. Parse the mode. Grok Build supports only `turn` and `off` — reject `monitor` and `both` with: "Grok Build has no Monitor tool; only `turn` or `off` modes are supported."
+1. Parse the mode. Grok Build supports `turn`, `monitor`, and `off` — reject `both` with: "Grok Build does not support `both`; use `turn`, `monitor`, or `off`."
 2. Run: `~/.agents/skills/__SKILL_NAME__/scripts/delivery.sh set <mode> grok-build "$(pwd)"`
+3. If the mode is `monitor`, read the `AGMSG-DIRECTIVE` block `delivery.sh` prints and follow it: invoke the `monitor` tool with the given command so the watcher starts in this session. If the mode is `turn` or `off` and a watcher is streaming, stop it with `kill_command_or_subagent`.
 
 If argument is "hook on" (legacy alias):
 1. Run: `~/.agents/skills/__SKILL_NAME__/scripts/delivery.sh set turn grok-build "$(pwd)"`

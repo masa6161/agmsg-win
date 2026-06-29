@@ -228,6 +228,38 @@ teardown() {
   rm -rf "$custom"
 }
 
+@test "spawn: --boot-prompt appends an initial task to the actas prompt" {
+  bash "$SCRIPTS/join.sh" myteam existing claude-code "$PROJ"
+  run bash "$SCRIPTS/spawn.sh" claude-code alice --project "$PROJ" --no-wait \
+    --boot-prompt "review the diff"
+  [ "$status" -eq 0 ]
+
+  # The boot script still carries the actas slash command, and now ALSO the
+  # task text, so the spawned agent claims its identity AND acts on the task in
+  # its first turn. (printf %q escapes spaces, so assert on tokens.)
+  boot="$(cat "$CAPTURE")"
+  [ -f "$boot" ]
+  run cat "$boot"
+  [[ "$output" == *"actas"* ]]
+  [[ "$output" == *"alice"* ]]
+  [[ "$output" == *"review"* ]]
+  [[ "$output" == *"diff"* ]]
+}
+
+@test "spawn: without --boot-prompt the boot script carries no extra task text" {
+  bash "$SCRIPTS/join.sh" myteam existing claude-code "$PROJ"
+  run bash "$SCRIPTS/spawn.sh" claude-code alice --project "$PROJ" --no-wait
+  [ "$status" -eq 0 ]
+
+  # Guards the byte-identical claim: with no --boot-prompt, only the actas command
+  # is passed — no task text leaks into the boot script.
+  boot="$(cat "$CAPTURE")"
+  [ -f "$boot" ]
+  run cat "$boot"
+  [[ "$output" == *"actas"* ]]
+  [[ "$output" != *"review the diff"* ]]
+}
+
 @test "spawn: errors when \$TMUX is set but tmux is not on PATH" {
   bash "$SCRIPTS/join.sh" myteam existing claude-code "$PROJ"
   # $TMUX set (we look like we're inside tmux) but a PATH that lacks the tmux
@@ -311,4 +343,60 @@ teardown() {
   run bash "$SCRIPTS/spawn.sh" codex reviewer --project "$PROJ"
   [ "$status" -eq 0 ]
   [[ "$output" == *"skipping readiness wait"* ]]
+}
+
+@test "spawn: grok-build skips the readiness wait even without --no-wait (monitor=no)" {
+  # Regression guard: grok-build's monitor watcher attaches via the agent's
+  # actas/rule launch (no SessionStart hook) and only in monitor mode, so there
+  # is no ready sentinel for spawn to await. With monitor=no, spawn must skip the
+  # wait and return immediately instead of hanging a default turn/off-mode spawn
+  # until --ready-timeout. (Without this, monitor=yes made the wait fire.)
+  bash "$SCRIPTS/join.sh" myteam existing claude-code "$PROJ"
+  run env -u TMUX bash "$SCRIPTS/spawn.sh" grok-build alice --project "$PROJ" \
+    --terminal "true # {cmd}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"skipping readiness wait"* ]]
+  [[ "$output" != *"status=timeout"* ]]
+  [[ "$output" != *"status=ready"* ]]
+}
+
+# --- initial prompt (--boot-prompt) ---
+# spawn folds an optional initial task into the agent's first prompt: the boot
+# prompt becomes the actas slash command followed (newline-separated) by the
+# task, so the new agent claims its identity AND starts the task in one turn —
+# the only way to hand a one-shot goal to a no-Monitor peer (codex). These tests
+# assert on the generated boot script the terminal template is handed (captured
+# via record.sh), the same way the actas-prompt tests above do.
+
+@test "spawn: --boot-prompt requires a task (missing arg errors)" {
+  run bash "$SCRIPTS/spawn.sh" claude-code alice --project "$PROJ" --boot-prompt
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--boot-prompt needs a task"* ]]
+}
+
+@test "spawn: --boot-prompt \"\" is treated as no task (no-op, not an error)" {
+  bash "$SCRIPTS/join.sh" myteam existing claude-code "$PROJ"
+  # An explicit empty string must NOT abort the spawn — it degrades to a plain
+  # spawn (so a scripted `--boot-prompt "$VAR"` with an empty VAR still works).
+  run bash "$SCRIPTS/spawn.sh" claude-code alice --project "$PROJ" --no-wait --boot-prompt ""
+  [ "$status" -eq 0 ]
+  boot="$(cat "$CAPTURE")"
+  run cat "$boot"
+  [[ "$output" == *"actas"* ]]
+  [[ "$output" == *"alice"* ]]
+  # No task appended → no newline-join → boot prompt unchanged.
+  [[ "$output" != *'\n'* ]]
+}
+
+@test "spawn: --boot-prompt folds the initial task into the boot prompt (codex)" {
+  bash "$SCRIPTS/join.sh" myteam existing codex "$PROJ"
+  run bash "$SCRIPTS/spawn.sh" codex reviewer --project "$PROJ" \
+    --boot-prompt "REVIEW_THE_DIFF"
+  [ "$status" -eq 0 ]
+  boot="$(cat "$CAPTURE")"
+  [ -f "$boot" ]
+  run cat "$boot"
+  [[ "$output" == *"actas"* ]]
+  [[ "$output" == *"reviewer"* ]]
+  [[ "$output" == *"REVIEW_THE_DIFF"* ]]
 }

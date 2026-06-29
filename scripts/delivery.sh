@@ -41,6 +41,10 @@ RUN_DIR="$SKILL_DIR/run"
 . "$SCRIPT_DIR/lib/instance-id.sh"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/node.sh"
+# hash.sh provides agmsg_sha1 — stop_codex_bridge derives the per-project
+# app-server record paths (codex-app-server.<hash>.{pid,port,version}) from it.
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/hash.sh"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/type-registry.sh"
 # storage.sh provides agmsg_sqlite_mem (CR-safe sqlite, #180); hooks-json.sh's
@@ -150,6 +154,8 @@ agmsg_delivery_apply_default() {
 #   agmsg_delivery_apply      — write the hook file for a mode (default: JSON event-hooks)
 #   agmsg_delivery_on_enable  — side effects when enabling monitor/both (default: none)
 #   agmsg_delivery_on_disable — side effects when turning delivery off  (default: none)
+#   agmsg_delivery_stop_directive — in-session watcher-stop directive (default: Claude TaskStop)
+#   agmsg_delivery_runtime_status — runtime liveness summary (default: watch.sh pidfiles)
 # A plug that wants the default apply can delegate to agmsg_delivery_apply_default.
 agmsg_delivery_apply() { agmsg_delivery_apply_default "$@"; }
 agmsg_delivery_on_enable() { :; }
@@ -158,6 +164,10 @@ agmsg_delivery_on_enable() { :; }
 # <project>. Passing the type scopes the kill so disabling one type's delivery
 # never tears down another type's watcher in the same project.
 agmsg_delivery_on_disable() { kill_all_watchers "$2" "$1" >/dev/null 2>&1 || true; }
+# Default in-session stop directive: tell a running Claude Code session to find
+# and TaskStop its watcher. Types whose runtime launches the watcher a different
+# way (e.g. grok-build's `monitor` tool) override this with their own wording.
+agmsg_delivery_stop_directive() { emit_stop_directive; }
 
 # Default delivery status (json-hooks types: claude-code, codex). Derives the mode
 # from the settings hooks file's agmsg-owned SessionStart/Stop entries, then prints
@@ -208,6 +218,24 @@ agmsg_delivery_status_default() {
   fi
 }
 agmsg_delivery_status() { agmsg_delivery_status_default "$@"; }
+
+agmsg_delivery_runtime_status_default() {
+  if [ -d "$RUN_DIR" ]; then
+    local alive=0 dead=0
+    for f in "$RUN_DIR"/watch.*.pid; do
+      [ -f "$f" ] || continue
+      local pid
+      pid=$(cat "$f" 2>/dev/null || echo "")
+      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        alive=$((alive + 1))
+      else
+        dead=$((dead + 1))
+      fi
+    done
+    echo "watch processes: $alive alive, $dead stale pidfiles"
+  fi
+}
+agmsg_delivery_runtime_status() { agmsg_delivery_runtime_status_default "$@"; }
 
 # Source the type's delivery plug (if present) so its overrides take effect.
 # One type is handled per invocation, so the global overrides never go stale.
@@ -292,10 +320,11 @@ by this command.
 EOF
 }
 
-# Stop the Codex monitor bridge(s) for a project and remove their run artifacts.
-# Used by `set off codex` (and the manual counterpart to the not-yet-wired auto
-# teardown, #149). Leaves the shared app-server and the global shim alone — only
-# the per-identity bridge is project-scoped. Echoes how many were killed.
+# Stop the Codex monitor bridge(s) for a project and remove their run artifacts,
+# then tear down the project's shared app-server record too (it is keyed per
+# project, so `off` should not leave it running). Used by `set off codex` (and
+# the manual counterpart to the not-yet-wired auto teardown, #149). The global
+# shim is left alone (it is cross-project). Echoes how many bridges were killed.
 stop_codex_bridge() {
   local project="$1"
   local pairs team name pidfile bpid killed=0
@@ -309,11 +338,40 @@ stop_codex_bridge() {
       if [ -n "$bpid" ] && kill -0 "$bpid" 2>/dev/null; then
         kill "$bpid" 2>/dev/null && killed=$((killed + 1))
       fi
-      rm -f "$pidfile" "${pidfile%.pid}.meta" "${pidfile%.pid}.log"
+      # .appserver records which app-server URL the bridge was bound to (the
+      # launcher's stale-binding guard); drop it with the rest so it cannot
+      # mislead a later launcher.
+      rm -f "$pidfile" "${pidfile%.pid}.meta" "${pidfile%.pid}.log" "${pidfile%.pid}.appserver"
     done <<EOF
 $pairs
 EOF
   fi
+
+  # Tear down the project's shared app-server too. It is keyed per project
+  # (codex-app-server.<hash>.{pid,port,version}); turning delivery off means no
+  # bridge needs it, and leaving it running keeps a stale port the next launch
+  # would have to recreate anyway. Only kill the recorded pid when its cmdline
+  # confirms it is our app-server (a recycled pid could be unrelated); drop the
+  # record either way.
+  local project_hash server_pidfile server_pid server_cmd
+  project_hash="$(printf '%s' "$project" | agmsg_sha1 2>/dev/null || true)"
+  if [ -n "$project_hash" ]; then
+    server_pidfile="$RUN_DIR/codex-app-server.$project_hash.pid"
+    if [ -f "$server_pidfile" ]; then
+      server_pid="$(cat "$server_pidfile" 2>/dev/null || true)"
+      if [ -n "$server_pid" ] && kill -0 "$server_pid" 2>/dev/null; then
+        server_cmd="$(compat_get_cmdline "$server_pid" 2>/dev/null || true)"
+        case "$server_cmd" in
+          *codex*app-server*) kill "$server_pid" 2>/dev/null || true ;;
+        esac
+      fi
+      rm -f "$RUN_DIR/codex-app-server.$project_hash.pid" \
+            "$RUN_DIR/codex-app-server.$project_hash.port" \
+            "$RUN_DIR/codex-app-server.$project_hash.version" \
+            "$RUN_DIR/codex-app-server.$project_hash.log"
+    fi
+  fi
+
   echo "$killed"
 }
 
@@ -361,7 +419,7 @@ do_set() {
       # watcher in the project — so any type's `set turn` tore down the
       # project's claude-code monitor, the only type that runs one.)
       kill_all_watchers "$PROJECT" "$TYPE" >/dev/null 2>&1 || true
-      emit_stop_directive
+      agmsg_delivery_stop_directive
       ;;
     off)
       echo "Future sessions: no automatic delivery."
@@ -374,7 +432,7 @@ do_set() {
       # directive would be noise — and a stray TaskStop could disturb an
       # unrelated agent's watcher. Data-driven, so no per-type branch here.
       case " $SUPPORTED_MODES " in
-        *" monitor "*|*" turn "*|*" both "*) emit_stop_directive ;;
+        *" monitor "*|*" turn "*|*" both "*) agmsg_delivery_stop_directive ;;
       esac
       ;;
   esac
@@ -395,20 +453,7 @@ do_status() {
     agmsg_delivery_status "$TYPE" "$PROJECT"
   fi
 
-  if [ -d "$RUN_DIR" ]; then
-    local alive=0 dead=0
-    for f in "$RUN_DIR"/watch.*.pid; do
-      [ -f "$f" ] || continue
-      local pid
-      pid=$(cat "$f" 2>/dev/null || echo "")
-      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        alive=$((alive + 1))
-      else
-        dead=$((dead + 1))
-      fi
-    done
-    echo "watch processes: $alive alive, $dead stale pidfiles"
-  fi
+  agmsg_delivery_runtime_status "$TYPE" "$PROJECT"
 }
 
 kill_all_watchers() {
