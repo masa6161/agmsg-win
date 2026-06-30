@@ -93,9 +93,12 @@ function runInstaller(passthroughArgs) {
   const setupUrl = RAW_BASE + '/' + ref + '/setup.sh';
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agmsg-bootstrap-'));
   const setupPath = path.join(tmpDir, 'setup.sh');
+  // On Windows os.tmpdir() returns backslash paths; bash interprets those as
+  // escapes, so normalise to forward slashes for any path handed to bash/curl.
+  const bashPath = setupPath.replace(/\\/g, '/');
 
   try {
-    const fetch = spawnSync('curl', ['-fsSL', '-o', setupPath, setupUrl], { stdio: 'inherit' });
+    const fetch = spawnSync('curl', ['-fsSL', '-o', bashPath, setupUrl], { stdio: 'inherit' });
     if (fetch.error) {
       console.error('agmsg: failed to launch curl:', fetch.error.message);
       process.exit(1);
@@ -106,7 +109,7 @@ function runInstaller(passthroughArgs) {
     }
 
     // Pin the clone inside setup.sh to the same ref we fetched it from.
-    const result = spawnSync('bash', [setupPath, ...passthroughArgs], {
+    const result = spawnSync('bash', [bashPath, ...passthroughArgs], {
       stdio: 'inherit',
       env: Object.assign({}, process.env, { AGMSG_REF: ref })
     });
